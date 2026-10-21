@@ -1,70 +1,123 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">
 <title>Vehicle Audit</title>
 <style>
 *{box-sizing:border-box}body{font:15px system-ui,sans-serif;margin:0;background:#f4f5f7;color:#222}
 header{background:#14532d;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center}
 main{max-width:760px;margin:12px auto;padding:0 12px}.card{background:#fff;border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px #0002}
-label{display:block;margin:10px 0 3px;font-weight:600}input,select,button{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:15px}
+label{display:block;margin:10px 0 3px;font-weight:600}input,select,button{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:16px}
 button{background:#15803d;color:#fff;border:0;cursor:pointer;margin-top:10px}button.sec{background:#555}button.x{width:auto;padding:2px 9px;margin:0;background:#b91c1c}
-.row{display:flex;gap:8px}.row>*{flex:1}.row .qty{flex:0 0 70px}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px;border-bottom:1px solid #eee;text-align:left}
-.total{font-size:18px;font-weight:700;text-align:right;margin-top:8px}.hide{display:none}.thumbs img{height:60px;margin:4px;border-radius:6px}.err{color:#b91c1c}
+.row{display:flex;gap:8px}.row>*{flex:1}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px;border-bottom:1px solid #eee;text-align:left}
+.total{font-size:18px;font-weight:700;text-align:right;margin-top:8px}.hide{display:none!important}.thumbs img{height:60px;margin:4px;border-radius:6px}.err{color:#b91c1c}
+input[disabled]{background:#eef0f2;color:#222;font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.chip{background:#e7f3ea;border-radius:16px;padding:4px 6px 4px 12px;display:flex;align-items:center;gap:6px;font-size:13px}.chip button{width:22px;height:22px;padding:0;margin:0;border-radius:50%;background:#b91c1c;font-size:13px;line-height:1}
+/* cart-style parts */
+.pbtn{background:#fff;color:#15803d;border:2px dashed #15803d;font-weight:700}
+.line{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #eee}.line .nm{flex:1;font-size:13px;font-weight:600}.line .amt{min-width:64px;text-align:right;font-size:13px}
+.stp{display:flex;align-items:center;border:1px solid #15803d;border-radius:8px;overflow:hidden;flex:none}.stp button{width:36px;height:34px;margin:0;border-radius:0;padding:0;font-size:20px;line-height:1}.stp b{min-width:32px;text-align:center}
+.stp.add button{width:auto;padding:0 18px;font-size:15px}
+/* picker overlay */
+#pk{position:fixed;left:0;right:0;top:0;height:100%;background:#fff;z-index:50;display:none;flex-direction:column}
+#pk .top{display:flex;gap:8px;padding:10px;background:#14532d}#pk .top input{flex:1}#pk .top button{width:auto;margin:0;background:#fff;color:#14532d;font-weight:700;padding:10px 16px}
+#pk .bar{display:flex;justify-content:space-between;padding:8px 12px;background:#e7f3ea;font-weight:700}
+#pl{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.pr{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #eee}.pr.on{background:#f0fdf4}.pr .i{flex:1}.pr .i div{font-size:13px;font-weight:600}.pr .i small{color:#666}
 </style></head><body>
 <header><b>🛵 Vehicle Audit <span id="who"></span></b><a id="out" class="hide" href="#" style="color:#fff">Logout</a></header>
 <main>
-<div id="login" class="card"><h3>Login</h3><label>Hub ID (admin: admin)</label><input id="lid"><label>Password</label><input id="lpw" type="password">
+<div id="login" class="card"><h3>Login</h3><label>Login ID (admin: admin)</label><input id="lid" autocapitalize="none"><label>Password</label><input id="lpw" type="password">
 <button onclick="login()">Login</button><p id="lerr" class="err"></p></div>
 
 <div id="agent" class="hide">
  <div class="card"><h3>New Audit</h3>
-  <label>Agent name</label><input id="agentName">
-  <label>Vehicle number</label><input id="vno" placeholder="DL1SXX1234">
+  <label>Agent</label><input id="agentName" disabled>
+  <label>Hub</label><select id="hub"></select>
+  <label>Vehicle number</label><input id="vno" placeholder="DL1SXX1234" autocapitalize="characters">
   <div class="row"><div><label>Battery</label><select id="bt"><option>Sun</option><option>Yuma</option><option>BS</option><option>Moving</option><option>Home charging</option></select></div>
   <div><label>Battery present?</label><select id="bp"><option value="1">Yes</option><option value="0">No</option></select></div></div>
   <div class="row"><div><label>Category</label><select id="cat"><option>Minor repair</option><option>Major repair</option></select></div>
   <div><label>Condition</label><select id="cond"><option>Good</option><option>Bad</option><option>Poor</option></select></div></div>
-  <label>Parts needed (type to search)</label>
-  <div class="row"><input id="pin" list="pl" placeholder="search part…"><input id="pq" class="qty" type="number" value="1" min="1"><button style="flex:0 0 70px;margin:0" onclick="addPart()">Add</button></div>
-  <datalist id="pl"></datalist>
-  <table id="pt"></table><div class="total">RFD cost: ₹<span id="tot">0</span></div>
+  <label>Parts needed</label>
+  <button class="pbtn" onclick="openPk()">🔍 Search &amp; add parts</button>
+  <div id="sel"></div><div class="total">RFD cost: ₹<span id="tot">0</span></div>
   <label>Photos (max 3, auto-compressed)</label><input id="ph" type="file" accept="image/*" capture="environment" multiple onchange="pics()">
   <div id="th" class="thumbs"></div>
   <button onclick="submitAudit()">Submit Audit</button><p id="aerr" class="err"></p></div>
- <div class="card"><h3>My hub audits</h3><div id="mine"></div></div>
+ <div class="card"><h3>My audits</h3><div style="overflow:auto" id="mine"></div></div>
 </div>
 
 <div id="admin" class="hide">
- <div class="card"><h3>Create Hub login</h3><div class="row"><input id="nh" placeholder="hub id"><input id="np" placeholder="password"><button style="margin:0" onclick="newHub()">Create</button></div></div>
+ <div class="card"><h3>Hubs</h3><div class="row"><input id="nh" placeholder="new hub name"><button style="margin:0;flex:0 0 90px" onclick="newHub()">Add hub</button></div><div class="chips" id="hubs"></div></div>
+ <div class="card"><h3>Agent logins</h3><div class="row"><input id="na" placeholder="login id" autocapitalize="none"><input id="np" placeholder="password"><button style="margin:0;flex:0 0 90px" onclick="newAgent()">Create</button></div>
+  <small>Same id again = password reset</small><div class="chips" id="agents"></div></div>
  <div class="card"><h3>Reports</h3><label>Hub</label><select id="hf" onchange="loadAdmin()"><option value="">All hubs</option></select>
  <div class="total" id="sum"></div><div style="overflow:auto"><table id="rep"></table></div><button class="sec" onclick="csv()">Download CSV</button></div>
 </div></main>
+
+<!-- parts picker (full-screen, cart style) -->
+<div id="pk">
+ <div class="top"><input id="pq" type="search" placeholder="Search part…" autocomplete="off" oninput="drawPk()"><button onclick="closePk()">Done</button></div>
+ <div class="bar"><span id="pc">0 items</span><span>₹<span id="pt">0</span></span></div>
+ <div id="pl"></div>
+</div>
+
 <script>
-const API='https://eveez-audit.onrender.com//api'; // <- change to your deployed Node backend URL
-let T=localStorage.t,R=localStorage.r,parts=[],sel=[],photos=[],rows=[];
-const $=id=>document.getElementById(id),inr=n=>Math.round(n).toLocaleString('en-IN');
+const API='http://localhost:3000/api'; // <- change to your deployed Node backend URL
+let T=localStorage.t,R=localStorage.r,parts=[],sel=[],photos=[],rows=[],shown=[];
+const $=id=>document.getElementById(id),inr=n=>Math.round(n).toLocaleString('en-IN'),esc=s=>String(s??'').replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
 async function api(p,m='GET',b){const r=await fetch(API+p,{method:m,headers:{'Content-Type':'application/json',Authorization:'Bearer '+T},body:b&&JSON.stringify(b)});
  const j=await r.json().catch(()=>({}));if(r.status==401&&T)logout();if(!r.ok)throw Error(j.error||'error');return j}
 async function login(){try{const j=await api('/login','POST',{id:$('lid').value,password:$('lpw').value});T=localStorage.t=j.token;R=localStorage.r=j.role;localStorage.i=j.id;start()}catch(e){$('lerr').textContent=e.message}}
 function logout(){localStorage.clear();location.reload()}$('out').onclick=logout;
 async function start(){if(!T)return;$('login').classList.add('hide');$('out').classList.remove('hide');$('who').textContent='· '+localStorage.i;
- if(R=='agent'){$('agent').classList.remove('hide');parts=await api('/parts');$('pl').innerHTML=parts.map(p=>`<option value="${p.name}">`).join('');loadMine()}
- else{$('admin').classList.remove('hide');loadAdmin()}}
-function addPart(){const n=$('pin').value,p=parts.find(x=>x.name==n);if(!p)return alert('Pick a part from the list');
- const q=+$('pq').value||1,e=sel.find(x=>x.name==n);e?e.qty+=q:sel.push({name:n,price:p.price,qty:q});$('pin').value='';$('pq').value=1;drawParts()}
-function drawParts(){$('pt').innerHTML=sel.map((p,i)=>`<tr><td>${p.name}</td><td>${p.qty}×₹${inr(p.price)}</td><td>₹${inr(p.qty*p.price)}</td><td><button class=x onclick="sel.splice(${i},1);drawParts()">×</button></td></tr>`).join('');
+ if(R=='agent'){$('agent').classList.remove('hide');$('agentName').value=localStorage.i;
+  const [p,h]=await Promise.all([api('/parts'),api('/hubs')]);parts=p;
+  $('hub').innerHTML='<option value="">— select hub —</option>'+h.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+  if(localStorage.hub&&h.some(x=>x.id==localStorage.hub))$('hub').value=localStorage.hub;
+  $('hub').onchange=()=>localStorage.hub=$('hub').value;loadMine()}
+ else{$('admin').classList.remove('hide');await loadHubs();loadAgents();loadAdmin()}}
+
+/* ---------- parts: cart-style ---------- */
+const qtyOf=i=>(sel.find(x=>x.pi==i)||{}).qty||0;
+function setQty(i,q){const p=parts[i],k=sel.findIndex(x=>x.pi==i);
+ if(q<=0){if(k>-1)sel.splice(k,1)}else if(k>-1)sel[k].qty=q;else sel.push({pi:i,name:p.name,price:p.price,qty:q});
+ drawSel();const r=$('r'+i);if(r){r.className='pr'+(q?' on':'');r.querySelector('.ctl').innerHTML=ctl(i)}pkBar()}
+const ctl=i=>{const q=qtyOf(i);return q?`<div class="stp"><button onclick="setQty(${i},${q-1})">−</button><b>${q}</b><button onclick="setQty(${i},${q+1})">+</button></div>`
+ :`<div class="stp add"><button onclick="setQty(${i},1)">Add</button></div>`};
+function drawSel(){$('sel').innerHTML=sel.map(p=>`<div class="line"><div class="nm">${esc(p.name)}</div><div class="stp"><button onclick="setQty(${p.pi},${p.qty-1})">−</button><b>${p.qty}</b><button onclick="setQty(${p.pi},${p.qty+1})">+</button></div><div class="amt">₹${inr(p.qty*p.price)}</div><button class="x" onclick="setQty(${p.pi},0)">×</button></div>`).join('');
  $('tot').textContent=inr(sel.reduce((s,p)=>s+p.qty*p.price,0))}
-// compress to max 800px JPEG q0.6 (~50-80KB each)
+function pkBar(){$('pc').textContent=sel.reduce((s,p)=>s+p.qty,0)+' items';$('pt').textContent=$('tot').textContent}
+function drawPk(){const t=$('pq').value.toLowerCase().split(/\s+/).filter(Boolean);
+ shown=parts.map((p,i)=>i).filter(i=>t.every(w=>parts[i].name.toLowerCase().includes(w)));
+ $('pl').innerHTML=shown.map(i=>`<div class="pr${qtyOf(i)?' on':''}" id="r${i}"><div class="i"><div>${esc(parts[i].name)}</div><small>₹${inr(parts[i].price)}</small></div><span class="ctl">${ctl(i)}</span></div>`).join('')||'<p style="padding:14px;color:#666">No part found</p>';pkBar()}
+function fitPk(){const v=window.visualViewport;if(v){$('pk').style.height=v.height+'px';$('pk').style.top=v.offsetTop+'px'}}
+function openPk(){$('pk').style.display='flex';document.body.style.overflow='hidden';fitPk();$('pq').value='';drawPk();$('pq').focus()}
+function closePk(){$('pk').style.display='none';document.body.style.overflow='';$('pq').blur()}
+if(window.visualViewport){visualViewport.addEventListener('resize',fitPk);visualViewport.addEventListener('scroll',fitPk)}
+$('pl').addEventListener('mousedown',e=>{if(e.target.closest('button'))e.preventDefault()}); // keep keyboard open while adding
+
+/* ---------- photos / submit ---------- */
 function compress(f){return new Promise(ok=>{const im=new Image();im.onload=()=>{const s=Math.min(1,800/Math.max(im.width,im.height)),c=document.createElement('canvas');
  c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',.6))};im.src=URL.createObjectURL(f)})}
 async function pics(){photos=[];for(const f of [...$('ph').files].slice(0,3))photos.push(await compress(f));$('th').innerHTML=photos.map(s=>`<img src="${s}">`).join('')}
-async function submitAudit(){try{const j=await api('/audits','POST',{agentName:$('agentName').value,vehicleNo:$('vno').value,batteryType:$('bt').value,batteryPresent:$('bp').value=='1',
- category:$('cat').value,condition:$('cond').value,parts:sel,photos});alert('Saved. RFD cost ₹'+inr(j.rfdCost));
- sel=[];photos=[];$('vno').value='';$('ph').value='';$('th').innerHTML='';drawParts();loadMine();$('aerr').textContent=''}catch(e){$('aerr').textContent=e.message}}
-const tbl=r=>`<tr><th>Vehicle</th><th>Hub</th><th>Battery</th><th>Category</th><th>Cond.</th><th>RFD ₹</th></tr>`+r.map(a=>`<tr><td>${a.vehicleNo}</td><td>${a.hubId}</td><td>${a.batteryType}${a.batteryPresent?'':' (missing)'}</td><td>${a.category}</td><td>${a.condition}</td><td>${inr(a.rfdCost)}</td></tr>`).join('');
+async function submitAudit(){try{if(!$('hub').value)throw Error('Select hub');
+ const j=await api('/audits','POST',{hubId:$('hub').value,vehicleNo:$('vno').value,batteryType:$('bt').value,batteryPresent:$('bp').value=='1',
+ category:$('cat').value,condition:$('cond').value,parts:sel.map(p=>({name:p.name,qty:p.qty})),photos});alert('Saved. RFD cost ₹'+inr(j.rfdCost));
+ sel=[];photos=[];$('vno').value='';$('ph').value='';$('th').innerHTML='';drawSel();loadMine();$('aerr').textContent=''}catch(e){$('aerr').textContent=e.message}}
+const tbl=r=>`<tr><th>Vehicle</th><th>Hub</th><th>Agent</th><th>Battery</th><th>Category</th><th>Cond.</th><th>RFD ₹</th></tr>`+r.map(a=>`<tr><td>${esc(a.vehicleNo)}</td><td>${esc(a.hubName||a.hubId)}</td><td>${esc(a.agentName||'')}</td><td>${esc(a.batteryType)}${a.batteryPresent?'':' (missing)'}</td><td>${esc(a.category)}</td><td>${esc(a.condition)}</td><td>${inr(a.rfdCost)}</td></tr>`).join('');
 async function loadMine(){$('mine').innerHTML='<table>'+tbl(await api('/audits'))+'</table>'}
-async function loadAdmin(){const h=$('hf').value;if($('hf').options.length==1)(await api('/hubs')).forEach(x=>$('hf').add(new Option(x,x)));
- rows=await api('/audits'+(h?'?hubId='+h:''));$('rep').innerHTML=tbl(rows);$('sum').textContent=rows.length+' vehicles · total RFD ₹'+inr(rows.reduce((s,a)=>s+a.rfdCost,0))}
-async function newHub(){try{await api('/hubs','POST',{hubId:$('nh').value,password:$('np').value});alert('Hub created');$('nh').value=$('np').value='';$('hf').length=1;loadAdmin()}catch(e){alert(e.message)}}
-function csv(){const l=[['Vehicle','Hub','Agent','Battery','Battery present','Category','Condition','Parts','RFD cost','Date'],...rows.map(a=>[a.vehicleNo,a.hubId,a.agentName,a.batteryType,a.batteryPresent?'Yes':'No',a.category,a.condition,a.parts.map(p=>p.name+' x'+p.qty).join('; '),a.rfdCost,new Date(a.createdAt).toLocaleDateString()])];
+
+/* ---------- admin ---------- */
+async function loadHubs(){const h=await api('/hubs'),cur=$('hf').value;
+ $('hf').innerHTML='<option value="">All hubs</option>'+h.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');$('hf').value=cur;
+ $('hubs').innerHTML=h.map(x=>`<span class="chip">${esc(x.name)}<button onclick="delHub('${esc(x.id)}')">×</button></span>`).join('')||'<small>No hubs yet</small>'}
+async function loadAgents(){$('agents').innerHTML=(await api('/agents')).map(x=>`<span class="chip">${esc(x)}<button onclick="delAgent('${esc(x)}')">×</button></span>`).join('')||'<small>No agents yet</small>'}
+async function loadAdmin(){const h=$('hf').value;rows=await api('/audits'+(h?'?hubId='+encodeURIComponent(h):''));$('rep').innerHTML=tbl(rows);
+ $('sum').textContent=rows.length+' vehicles · total RFD ₹'+inr(rows.reduce((s,a)=>s+a.rfdCost,0))}
+async function newHub(){try{await api('/hubs','POST',{name:$('nh').value});$('nh').value='';loadHubs()}catch(e){alert(e.message)}}
+async function delHub(id){if(confirm('Delete hub "'+id+'"? Old audits stay.')){await api('/hubs/'+encodeURIComponent(id),'DELETE');loadHubs()}}
+async function newAgent(){try{await api('/agents','POST',{id:$('na').value,password:$('np').value});alert('Agent saved');$('na').value=$('np').value='';loadAgents()}catch(e){alert(e.message)}}
+async function delAgent(id){if(confirm('Delete agent "'+id+'"?')){await api('/agents/'+encodeURIComponent(id),'DELETE');loadAgents()}}
+function csv(){const l=[['Vehicle','Hub','Agent','Battery','Battery present','Category','Condition','Parts','RFD cost','Date'],...rows.map(a=>[a.vehicleNo,a.hubName||a.hubId,a.agentName,a.batteryType,a.batteryPresent?'Yes':'No',a.category,a.condition,a.parts.map(p=>p.name+' x'+p.qty).join('; '),a.rfdCost,new Date(a.createdAt).toLocaleDateString()])];
  const b=new Blob([l.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='audit-report.csv';a.click()}
 start();
 </script></body></html>
