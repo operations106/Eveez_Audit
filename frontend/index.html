@@ -38,7 +38,7 @@ button{background:#15803d;color:#fff;border:0;cursor:pointer;margin-top:10px}but
  <div class="total" id="sum"></div><div style="overflow:auto"><table id="rep"></table></div><button class="sec" onclick="csv()">Download CSV</button></div>
 </div></main>
 <script>
-const API='http://localhost:3000/api'; // <- change to your deployed Node backend URL
+const API='https://eveez-audit.onrender.com//api'; // <- change to your deployed Node backend URL
 let T=localStorage.t,R=localStorage.r,parts=[],sel=[],photos=[],rows=[];
 const $=id=>document.getElementById(id),inr=n=>Math.round(n).toLocaleString('en-IN');
 async function api(p,m='GET',b){const r=await fetch(API+p,{method:m,headers:{'Content-Type':'application/json',Authorization:'Bearer '+T},body:b&&JSON.stringify(b)});
