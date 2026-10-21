@@ -60,4 +60,15 @@ app.get('/api/hubs', auth(['admin']), async (_, res) => {
   const s = await db.collection('users').where('role', '==', 'agent').get(); res.json(s.docs.map(d => d.id));
 });
 
+// Auto-create admin on first start (no shell needed). Set ADMIN_PASSWORD env var on Render.
+(async () => {
+  const ref = db.collection('users').doc('admin');
+  if (!(await ref.get()).exists) {
+    const pw = process.env.ADMIN_PASSWORD;
+    if (!pw) return console.log('Set ADMIN_PASSWORD env var to create the admin login');
+    await ref.set({ id: 'admin', role: 'admin', name: 'Admin', hash: bcrypt.hashSync(pw, 10) });
+    console.log('admin created');
+  }
+})().catch(console.error);
+
 app.listen(process.env.PORT || 3000, () => console.log('API up'));

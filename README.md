@@ -1,7 +1,7 @@
 # Vehicle Audit App
 ## Backend (Node.js)
 1. Firebase console > Firestore enable > Project settings > Service accounts > Generate key -> save as backend/serviceAccount.json
-2. cd backend && npm i && JWT_SECRET=<long random> npm run seed   (admin / admin123 - change it)
+2. Set env ADMIN_PASSWORD; admin user is auto-created on first start (or run npm run seed locally)
 3. JWT_SECRET=<same> npm start   (deploy on Render/Railway/VPS)
 4. Firestore: create composite index when the console error link appears (audits: hubId asc + createdAt desc)
 ## Frontend (Firebase Hosting)
