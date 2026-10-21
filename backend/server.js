@@ -39,6 +39,14 @@ app.post('/api/audits', auth(['agent']), async (req, res) => {
 });
 
 // Agent sees own audits (incl. old audits made under their old hub-login), admin sees all (optional ?hubId=). Photos excluded for speed.
+// Admin query: optional hubId + date range (from/to = ms timestamps). hubId + createdAt uses the same composite index as before.
+const adminQuery = (o, lim) => {
+  let q = db.collection('audits');
+  if (o.hubId) q = q.where('hubId', '==', o.hubId);
+  if (+o.from) q = q.where('createdAt', '>=', +o.from);
+  if (+o.to) q = q.where('createdAt', '<=', +o.to);
+  return q.orderBy('createdAt', 'desc').limit(lim);
+};
 const strip = d => { const { photos, ...r } = d.data(); return { id: d.id, ...r, photoCount: (photos || []).length }; };
 app.get('/api/audits', auth(), async (req, res) => {
   if (req.user.role === 'agent') {
@@ -49,9 +57,7 @@ app.get('/api/audits', auth(), async (req, res) => {
     const m = new Map(); a.docs.forEach(d => m.set(d.id, d)); b.docs.forEach(d => { if (!d.data().agentId) m.set(d.id, d); });
     return res.json([...m.values()].map(strip).sort((x, y) => y.createdAt - x.createdAt).slice(0, 500));
   }
-  let q = db.collection('audits');
-  if (req.query.hubId) q = q.where('hubId', '==', req.query.hubId);
-  const snap = await q.orderBy('createdAt', 'desc').limit(500).get();
+  const snap = await adminQuery(req.query, 500).get();
   res.json(snap.docs.map(strip));
 });
 app.get('/api/audits/:id/photos', auth(), async (req, res) => {
@@ -86,6 +92,66 @@ app.post('/api/agents', auth(['admin']), async (req, res) => {
 app.delete('/api/agents/:id', auth(['admin']), async (req, res) => {
   if (req.params.id === 'admin') return res.status(400).json({ error: 'not allowed' });
   await db.collection('users').doc(req.params.id).delete(); res.json({ ok: true });
+});
+
+// ---------- Email report (Brevo HTTP API; works on Render free since it is not SMTP) ----------
+// Env: BREVO_API_KEY, MAIL_FROM (a sender email verified in Brevo)
+const E = x => String(x ?? '').replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
+const TZ = { timeZone: 'Asia/Kolkata' };
+const fmtDT = ms => new Date(ms).toLocaleString('en-GB', { ...TZ, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+const csvDT = ms => new Date(ms).toLocaleString('sv-SE', TZ).slice(0, 16);
+const dayStr = ms => new Date(ms).toLocaleDateString('en-CA', TZ);
+const MAX_BYTES = 3.2 * 1024 * 1024, MAX_MAILS = 15;
+
+async function sendMail(to, subject, html, attachment) {
+  const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST', headers: { 'api-key': process.env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ sender: { email: process.env.MAIL_FROM, name: 'Vehicle Audit' }, to: to.map(email => ({ email })), subject, htmlContent: html, attachment: attachment && attachment.length ? attachment : undefined })
+  });
+  if (!r.ok) throw Error('mail failed: ' + (await r.text()).slice(0, 200));
+}
+const csvOf = rows => [['Date', 'Vehicle', 'Hub', 'Agent', 'Battery', 'Battery present', 'Category', 'Condition', 'Parts', 'RFD cost'],
+  ...rows.map(a => [csvDT(a.createdAt), a.vehicleNo, a.hubName || a.hubId, a.agentName, a.batteryType, a.batteryPresent ? 'Yes' : 'No', a.category, a.condition, (a.parts || []).map(p => p.name + ' x' + p.qty).join('; '), a.rfdCost])]
+  .map(r => r.map(c => '"' + String(c ?? '').replace(/"/g, '""') + '"').join(',')).join('\n');
+const tableOf = rows => '<table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse;font:13px Arial"><tr style="background:#14532d;color:#fff"><th>Date</th><th>Vehicle</th><th>Hub</th><th>Agent</th><th>Battery</th><th>Category</th><th>Cond.</th><th>RFD ₹</th></tr>' +
+  rows.map(a => `<tr><td>${E(fmtDT(a.createdAt))}</td><td>${E(a.vehicleNo)}</td><td>${E(a.hubName || a.hubId)}</td><td>${E(a.agentName)}</td><td>${E(a.batteryType)}${a.batteryPresent ? '' : ' (missing)'}</td><td>${E(a.category)}</td><td>${E(a.condition)}</td><td align="right">${Math.round(a.rfdCost).toLocaleString('en-IN')}</td></tr>`).join('') + '</table>';
+
+app.post('/api/email-report', auth(['admin']), async (req, res) => {
+  try {
+    if (!process.env.BREVO_API_KEY || !process.env.MAIL_FROM) return res.status(500).json({ error: 'email not set up: add BREVO_API_KEY and MAIL_FROM env vars on the server' });
+    const to = String(req.body.emails || '').split(/[,;\s]+/).filter(Boolean);
+    if (!to.length || to.length > 5 || !to.every(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))) return res.status(400).json({ error: 'enter valid email (max 5, comma separated)' });
+    const snap = await adminQuery(req.body, 1000).get();
+    const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (!rows.length) return res.status(400).json({ error: 'no audits in this filter' });
+    const total = rows.reduce((s, a) => s + a.rfdCost, 0);
+    const range = (+req.body.from ? dayStr(+req.body.from) : 'start') + ' to ' + (+req.body.to ? dayStr(+req.body.to) : 'today');
+    const head = `<p><b>Vehicle Audit report</b> · ${E(req.body.hubName || 'All hubs')} · ${E(range)}<br>${rows.length} vehicles · total RFD ₹${Math.round(total).toLocaleString('en-IN')}</p>`;
+    const csv = { name: 'audit-report.csv', content: Buffer.from('\ufeff' + csvOf(rows)).toString('base64') };
+    let mails = 1;
+    // Mail 1: summary table + CSV
+    const chunks = [];
+    if (req.body.withPics) {
+      let cur = { rows: [], att: [], size: 0 };
+      rows.forEach((a, i) => {
+        const att = (a.photos || []).map((p, n) => {
+          const m = /^data:image\/(\w+);base64,(.+)$/.exec(p || ''); if (!m) return null;
+          return { name: `${a.vehicleNo}_${dayStr(a.createdAt)}_a${i + 1}_${n + 1}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`, content: m[2], size: m[2].length };
+        }).filter(Boolean);
+        if (!att.length) return;
+        const sz = att.reduce((s, x) => s + x.size, 0);
+        if (cur.size + sz > MAX_BYTES && cur.rows.length) { chunks.push(cur); cur = { rows: [], att: [], size: 0 }; }
+        cur.rows.push(a); cur.att.push(...att.map(({ name, content }) => ({ name, content }))); cur.size += sz;
+      });
+      if (cur.rows.length) chunks.push(cur);
+      if (chunks.length + 1 > MAX_MAILS) return res.status(400).json({ error: 'too many photos for one go, choose a shorter date range' });
+    }
+    await sendMail(to, `Vehicle Audit report · ${range}`, head + tableOf(rows) + (req.body.withPics ? `<p>Photos come in ${chunks.length} separate email(s).</p>` : ''), [csv]);
+    for (let i = 0; i < chunks.length; i++) {
+      await sendMail(to, `Vehicle Audit photos ${i + 1}/${chunks.length} · ${range}`, `<p>Photos ${i + 1}/${chunks.length} · file names start with vehicle number</p>` + tableOf(chunks[i].rows), chunks[i].att); mails++;
+    }
+    res.json({ ok: true, audits: rows.length, mails });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
 // Startup: auto-create admin; one-time migration of old hub-logins into the hubs list
