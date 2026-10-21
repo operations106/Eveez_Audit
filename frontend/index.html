@@ -1,0 +1,70 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vehicle Audit</title>
+<style>
+*{box-sizing:border-box}body{font:15px system-ui,sans-serif;margin:0;background:#f4f5f7;color:#222}
+header{background:#14532d;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center}
+main{max-width:760px;margin:12px auto;padding:0 12px}.card{background:#fff;border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px #0002}
+label{display:block;margin:10px 0 3px;font-weight:600}input,select,button{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:15px}
+button{background:#15803d;color:#fff;border:0;cursor:pointer;margin-top:10px}button.sec{background:#555}button.x{width:auto;padding:2px 9px;margin:0;background:#b91c1c}
+.row{display:flex;gap:8px}.row>*{flex:1}.row .qty{flex:0 0 70px}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px;border-bottom:1px solid #eee;text-align:left}
+.total{font-size:18px;font-weight:700;text-align:right;margin-top:8px}.hide{display:none}.thumbs img{height:60px;margin:4px;border-radius:6px}.err{color:#b91c1c}
+</style></head><body>
+<header><b>🛵 Vehicle Audit <span id="who"></span></b><a id="out" class="hide" href="#" style="color:#fff">Logout</a></header>
+<main>
+<div id="login" class="card"><h3>Login</h3><label>Hub ID (admin: admin)</label><input id="lid"><label>Password</label><input id="lpw" type="password">
+<button onclick="login()">Login</button><p id="lerr" class="err"></p></div>
+
+<div id="agent" class="hide">
+ <div class="card"><h3>New Audit</h3>
+  <label>Agent name</label><input id="agentName">
+  <label>Vehicle number</label><input id="vno" placeholder="DL1SXX1234">
+  <div class="row"><div><label>Battery</label><select id="bt"><option>Sun</option><option>Yuma</option><option>BS</option><option>Moving</option><option>Home charging</option></select></div>
+  <div><label>Battery present?</label><select id="bp"><option value="1">Yes</option><option value="0">No</option></select></div></div>
+  <div class="row"><div><label>Category</label><select id="cat"><option>Minor repair</option><option>Major repair</option></select></div>
+  <div><label>Condition</label><select id="cond"><option>Good</option><option>Bad</option><option>Poor</option></select></div></div>
+  <label>Parts needed (type to search)</label>
+  <div class="row"><input id="pin" list="pl" placeholder="search part…"><input id="pq" class="qty" type="number" value="1" min="1"><button style="flex:0 0 70px;margin:0" onclick="addPart()">Add</button></div>
+  <datalist id="pl"></datalist>
+  <table id="pt"></table><div class="total">RFD cost: ₹<span id="tot">0</span></div>
+  <label>Photos (max 3, auto-compressed)</label><input id="ph" type="file" accept="image/*" capture="environment" multiple onchange="pics()">
+  <div id="th" class="thumbs"></div>
+  <button onclick="submitAudit()">Submit Audit</button><p id="aerr" class="err"></p></div>
+ <div class="card"><h3>My hub audits</h3><div id="mine"></div></div>
+</div>
+
+<div id="admin" class="hide">
+ <div class="card"><h3>Create Hub login</h3><div class="row"><input id="nh" placeholder="hub id"><input id="np" placeholder="password"><button style="margin:0" onclick="newHub()">Create</button></div></div>
+ <div class="card"><h3>Reports</h3><label>Hub</label><select id="hf" onchange="loadAdmin()"><option value="">All hubs</option></select>
+ <div class="total" id="sum"></div><div style="overflow:auto"><table id="rep"></table></div><button class="sec" onclick="csv()">Download CSV</button></div>
+</div></main>
+<script>
+const API='http://localhost:3000/api'; // <- change to your deployed Node backend URL
+let T=localStorage.t,R=localStorage.r,parts=[],sel=[],photos=[],rows=[];
+const $=id=>document.getElementById(id),inr=n=>Math.round(n).toLocaleString('en-IN');
+async function api(p,m='GET',b){const r=await fetch(API+p,{method:m,headers:{'Content-Type':'application/json',Authorization:'Bearer '+T},body:b&&JSON.stringify(b)});
+ const j=await r.json().catch(()=>({}));if(r.status==401&&T)logout();if(!r.ok)throw Error(j.error||'error');return j}
+async function login(){try{const j=await api('/login','POST',{id:$('lid').value,password:$('lpw').value});T=localStorage.t=j.token;R=localStorage.r=j.role;localStorage.i=j.id;start()}catch(e){$('lerr').textContent=e.message}}
+function logout(){localStorage.clear();location.reload()}$('out').onclick=logout;
+async function start(){if(!T)return;$('login').classList.add('hide');$('out').classList.remove('hide');$('who').textContent='· '+localStorage.i;
+ if(R=='agent'){$('agent').classList.remove('hide');parts=await api('/parts');$('pl').innerHTML=parts.map(p=>`<option value="${p.name}">`).join('');loadMine()}
+ else{$('admin').classList.remove('hide');loadAdmin()}}
+function addPart(){const n=$('pin').value,p=parts.find(x=>x.name==n);if(!p)return alert('Pick a part from the list');
+ const q=+$('pq').value||1,e=sel.find(x=>x.name==n);e?e.qty+=q:sel.push({name:n,price:p.price,qty:q});$('pin').value='';$('pq').value=1;drawParts()}
+function drawParts(){$('pt').innerHTML=sel.map((p,i)=>`<tr><td>${p.name}</td><td>${p.qty}×₹${inr(p.price)}</td><td>₹${inr(p.qty*p.price)}</td><td><button class=x onclick="sel.splice(${i},1);drawParts()">×</button></td></tr>`).join('');
+ $('tot').textContent=inr(sel.reduce((s,p)=>s+p.qty*p.price,0))}
+// compress to max 800px JPEG q0.6 (~50-80KB each)
+function compress(f){return new Promise(ok=>{const im=new Image();im.onload=()=>{const s=Math.min(1,800/Math.max(im.width,im.height)),c=document.createElement('canvas');
+ c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',.6))};im.src=URL.createObjectURL(f)})}
+async function pics(){photos=[];for(const f of [...$('ph').files].slice(0,3))photos.push(await compress(f));$('th').innerHTML=photos.map(s=>`<img src="${s}">`).join('')}
+async function submitAudit(){try{const j=await api('/audits','POST',{agentName:$('agentName').value,vehicleNo:$('vno').value,batteryType:$('bt').value,batteryPresent:$('bp').value=='1',
+ category:$('cat').value,condition:$('cond').value,parts:sel,photos});alert('Saved. RFD cost ₹'+inr(j.rfdCost));
+ sel=[];photos=[];$('vno').value='';$('ph').value='';$('th').innerHTML='';drawParts();loadMine();$('aerr').textContent=''}catch(e){$('aerr').textContent=e.message}}
+const tbl=r=>`<tr><th>Vehicle</th><th>Hub</th><th>Battery</th><th>Category</th><th>Cond.</th><th>RFD ₹</th></tr>`+r.map(a=>`<tr><td>${a.vehicleNo}</td><td>${a.hubId}</td><td>${a.batteryType}${a.batteryPresent?'':' (missing)'}</td><td>${a.category}</td><td>${a.condition}</td><td>${inr(a.rfdCost)}</td></tr>`).join('');
+async function loadMine(){$('mine').innerHTML='<table>'+tbl(await api('/audits'))+'</table>'}
+async function loadAdmin(){const h=$('hf').value;if($('hf').options.length==1)(await api('/hubs')).forEach(x=>$('hf').add(new Option(x,x)));
+ rows=await api('/audits'+(h?'?hubId='+h:''));$('rep').innerHTML=tbl(rows);$('sum').textContent=rows.length+' vehicles · total RFD ₹'+inr(rows.reduce((s,a)=>s+a.rfdCost,0))}
+async function newHub(){try{await api('/hubs','POST',{hubId:$('nh').value,password:$('np').value});alert('Hub created');$('nh').value=$('np').value='';$('hf').length=1;loadAdmin()}catch(e){alert(e.message)}}
+function csv(){const l=[['Vehicle','Hub','Agent','Battery','Battery present','Category','Condition','Parts','RFD cost','Date'],...rows.map(a=>[a.vehicleNo,a.hubId,a.agentName,a.batteryType,a.batteryPresent?'Yes':'No',a.category,a.condition,a.parts.map(p=>p.name+' x'+p.qty).join('; '),a.rfdCost,new Date(a.createdAt).toLocaleDateString()])];
+ const b=new Blob([l.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='audit-report.csv';a.click()}
+start();
+</script></body></html>
