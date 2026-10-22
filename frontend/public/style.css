@@ -76,3 +76,16 @@ th{color:var(--mute);font-size:12.5px}
 .legend small{color:var(--mute)}
 .trend{width:100%;height:auto}
 .tl{font-size:11px;fill:var(--mute)}
+
+.plist{max-height:52vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px;background:var(--bg);-webkit-overflow-scrolling:touch}
+.prow{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line)}
+.prow:last-child{border-bottom:0}
+.prow .pn{flex:1;min-width:0}
+.prow .pn b{display:block;font-size:14px;line-height:1.25;word-break:break-word}
+.prow .pn small{color:var(--mute)}
+.qty{display:flex;align-items:center;gap:4px}
+.qty input{width:52px;padding:7px 4px;text-align:center}
+.qty .qb{width:32px;height:34px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font-size:18px;font-weight:700;cursor:pointer;padding:0}
+.qty.sm{justify-content:flex-end}
+.qty.sm span{min-width:24px;text-align:center;font-weight:700}
+.qty.sm .qb{width:28px;height:28px;font-size:16px}

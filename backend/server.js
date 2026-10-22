@@ -16,6 +16,7 @@ const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json({ limit: '2mb' })); // photos pehle se compress hoti hain
 
+const titleCase = (x) => String(x || '').trim().replace(/\s+/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 40);
 const wrap = (fn) => (req, res) => fn(req, res).catch((e) => { console.error(e); res.status(500).json({ error: 'Server error' }); });
 
 // ---------- auth ----------
@@ -54,37 +55,85 @@ async function seedParts() {
   console.log('Parts seeded:', list.length);
 }
 
+// Purane setup me login = hub tha. Ek baar: har purane agent-login se hub bana do aur purane audits me agentId bhar do.
+async function migrateHubs() {
+  const meta = db.collection('meta').doc('hubs-migration');
+  if ((await meta.get()).exists) return;
+  const users = await db.collection('users').where('role', '==', 'agent').get();
+  for (const u of users.docs) {
+    const ref = db.collection('hubs').doc(u.id);
+    if (!(await ref.get()).exists) await ref.set({ name: u.data().name || u.id, active: true, createdAt: Date.now() });
+  }
+  const snap = await db.collection('audits').select('hubId', 'agentId').get();
+  const todo = snap.docs.filter((d) => !d.data().agentId);
+  for (let i = 0; i < todo.length; i += 400) {
+    const b = db.batch();
+    todo.slice(i, i + 400).forEach((d) => b.update(d.ref, { agentId: d.data().hubId }));
+    await b.commit();
+  }
+  await meta.set({ done: true, at: Date.now() });
+  console.log('Hubs migrated:', users.size, 'audits updated:', todo.length);
+}
+
 app.post('/api/login', wrap(async (req, res) => {
   const id = String(req.body.id || '').trim().toLowerCase();
   const pw = String(req.body.password || '');
   const d = await db.collection('users').doc(id).get();
-  if (!d.exists || !bcrypt.compareSync(pw, d.data().hash)) return res.status(401).json({ error: 'Hub ID / password galat hai' });
+  if (!d.exists || !bcrypt.compareSync(pw, d.data().hash)) return res.status(401).json({ error: 'Login ID / password galat hai' });
   const u = d.data();
-  if (u.active === false) return res.status(403).json({ error: 'Ye hub disabled hai' });
-  const user = { id, role: u.role, name: u.name, hubId: u.role === 'agent' ? id : null };
+  if (u.active === false) return res.status(403).json({ error: 'Ye login disabled hai' });
+  const user = { id, role: u.role, name: u.name };
   res.json({ token: jwt.sign(user, SECRET, { expiresIn: '12h' }), user });
 }));
 
-// ---------- hubs (admin) ----------
-app.get('/api/hubs', auth(['admin']), wrap(async (req, res) => {
-  const s = await db.collection('users').where('role', '==', 'agent').get();
-  res.json(s.docs.map((d) => ({ hubId: d.id, name: d.data().name, active: d.data().active !== false })));
+// ---------- hubs (sirf naam; login nahi) ----------
+const slug = (x) => String(x || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
+app.get('/api/hubs', auth(), wrap(async (req, res) => {
+  const s = await db.collection('hubs').get();
+  let list = s.docs.map((d) => ({ hubId: d.id, name: d.data().name, active: d.data().active !== false }));
+  if (req.user.role !== 'admin') list = list.filter((h) => h.active); // agent ko sirf active hubs
+  res.json(list.sort((a, b) => a.name.localeCompare(b.name)));
 }));
 app.post('/api/hubs', auth(['admin']), wrap(async (req, res) => {
-  const hubId = String(req.body.hubId || '').trim().toLowerCase();
-  const { name, password } = req.body;
-  if (!/^[a-z0-9_-]{2,30}$/.test(hubId) || !password || password.length < 4) return res.status(400).json({ error: 'Hub ID (2-30 letters/numbers) aur password (min 4) do' });
-  const ref = db.collection('users').doc(hubId);
-  if ((await ref.get()).exists) return res.status(409).json({ error: 'Ye Hub ID pehle se hai' });
-  await ref.set({ role: 'agent', name: name || hubId, hash: bcrypt.hashSync(password, 10), active: true, createdAt: Date.now() });
-  res.json({ ok: true });
+  const name = String(req.body.name || '').trim().slice(0, 60);
+  const hubId = slug(req.body.hubId || name);
+  if (!name || hubId.length < 2) return res.status(400).json({ error: 'Hub ka naam do (min 2 letters)' });
+  const ref = db.collection('hubs').doc(hubId);
+  if ((await ref.get()).exists) return res.status(409).json({ error: 'Ye hub pehle se hai' });
+  await ref.set({ name, active: true, createdAt: Date.now() });
+  res.json({ ok: true, hubId });
 }));
 app.put('/api/hubs/:id', auth(['admin']), wrap(async (req, res) => {
   const upd = {};
-  if (req.body.name) upd.name = req.body.name;
+  if (req.body.name) upd.name = String(req.body.name).trim().slice(0, 60);
+  if (typeof req.body.active === 'boolean') upd.active = req.body.active;
+  await db.collection('hubs').doc(req.params.id).update(upd);
+  res.json({ ok: true });
+}));
+
+// ---------- agent logins (admin) ----------
+app.get('/api/users', auth(['admin']), wrap(async (req, res) => {
+  const s = await db.collection('users').where('role', '==', 'agent').get();
+  res.json(s.docs.map((d) => ({ userId: d.id, name: d.data().name, active: d.data().active !== false })).sort((a, b) => a.userId.localeCompare(b.userId)));
+}));
+app.post('/api/users', auth(['admin']), wrap(async (req, res) => {
+  const userId = String(req.body.userId || '').trim().toLowerCase();
+  const { name, password } = req.body;
+  if (!/^[a-z0-9_-]{2,30}$/.test(userId) || !password || password.length < 4) return res.status(400).json({ error: 'Login ID (2-30 letters/numbers) aur password (min 4) do' });
+  if (!titleCase(name)) return res.status(400).json({ error: 'Agent ka naam do' });
+  const ref = db.collection('users').doc(userId);
+  if ((await ref.get()).exists) return res.status(409).json({ error: 'Ye Login ID pehle se hai' });
+  await ref.set({ role: 'agent', name: titleCase(name), hash: bcrypt.hashSync(password, 10), active: true, createdAt: Date.now() });
+  res.json({ ok: true });
+}));
+app.put('/api/users/:id', auth(['admin']), wrap(async (req, res) => {
+  const ref = db.collection('users').doc(req.params.id); const d = await ref.get();
+  if (!d.exists || d.data().role !== 'agent') return res.status(404).json({ error: 'Agent nahi mila' });
+  const upd = {};
+  if (req.body.name) upd.name = titleCase(req.body.name);
   if (req.body.password) upd.hash = bcrypt.hashSync(req.body.password, 10);
   if (typeof req.body.active === 'boolean') upd.active = req.body.active;
-  await db.collection('users').doc(req.params.id).update(upd);
+  await ref.update(upd);
   res.json({ ok: true });
 }));
 
@@ -123,43 +172,74 @@ app.delete('/api/parts/:id', auth(['admin']), wrap(async (req, res) => {
 }));
 
 // ---------- audits ----------
-const titleCase = (x) => String(x || '').trim().replace(/\s+/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 40);
 const BATTERIES = ['Sun', 'Yuma', 'BS', 'Moving', 'Home Charging'];
 const CATS = ['None', 'Minor Repair', 'Major Repair'];
 const CONDS = ['Good', 'Bad', 'Poor'];
 
+// ---------- draft: agent parts add karta jaye aur backend me save hota rahe (page reset ho to bhi wapas milega) ----------
+function cleanForm(b) {
+  const parts = [];
+  const seen = new Set();
+  (b.parts || []).forEach((p) => {
+    const id = String(p.id || ''); if (!id || seen.has(id)) return; seen.add(id);
+    parts.push({ id, qty: Math.max(1, Math.min(999, parseInt(p.qty) || 1)) });
+  });
+  return {
+    vehicleNo: String(b.vehicleNo || '').toUpperCase().replace(/\s+/g, '').slice(0, 20),
+    hubId: String(b.hubId || '').toLowerCase().slice(0, 30),
+    batteryType: BATTERIES.includes(b.batteryType) ? b.batteryType : BATTERIES[0],
+    batteryPresent: b.batteryPresent !== false,
+    category: CATS.includes(b.category) ? b.category : CATS[0],
+    condition: CONDS.includes(b.condition) ? b.condition : CONDS[0],
+    notes: String(b.notes || '').slice(0, 500),
+    parts,
+  };
+}
+app.get('/api/draft', auth(['agent']), wrap(async (req, res) => {
+  const d = await db.collection('drafts').doc(req.user.id).get();
+  res.json(d.exists ? d.data() : null);
+}));
+app.put('/api/draft', auth(['agent']), wrap(async (req, res) => {
+  await db.collection('drafts').doc(req.user.id).set({ ...cleanForm(req.body), updatedAt: Date.now() });
+  res.json({ ok: true });
+}));
+app.delete('/api/draft', auth(['agent']), wrap(async (req, res) => {
+  await db.collection('drafts').doc(req.user.id).delete();
+  res.json({ ok: true });
+}));
+
 app.post('/api/audits', auth(['agent']), wrap(async (req, res) => {
   const b = req.body;
-  const vehicleNo = String(b.vehicleNo || '').toUpperCase().replace(/\s+/g, '');
-  if (!vehicleNo) return res.status(400).json({ error: 'Vehicle number do' });
-  if (!titleCase(b.agentName)) return res.status(400).json({ error: 'Agent name do' });
+  const f = cleanForm(b);
+  if (!f.vehicleNo) return res.status(400).json({ error: 'Vehicle number do' });
+  const hub = f.hubId && await db.collection('hubs').doc(f.hubId).get();
+  if (!hub || !hub.exists || hub.data().active === false) return res.status(400).json({ error: 'Hub chuno' });
   if (!BATTERIES.includes(b.batteryType) || !CATS.includes(b.category) || !CONDS.includes(b.condition))
     return res.status(400).json({ error: 'Form adhura hai' });
   // price server par partsList se lo, client par bharosa nahi
-  const ids = [...new Set((b.parts || []).map((p) => p.id))];
+  const ids = f.parts.map((p) => p.id);
   const docs = await Promise.all(ids.map((id) => db.collection('parts').doc(id).get()));
   const priceMap = {}; docs.forEach((d) => d.exists && (priceMap[d.id] = d.data()));
-  const parts = (b.parts || []).filter((p) => priceMap[p.id]).map((p) => {
-    const qty = Math.max(1, parseInt(p.qty) || 1);
-    return { id: p.id, name: priceMap[p.id].name, price: priceMap[p.id].price, qty };
-  });
+  const parts = f.parts.filter((p) => priceMap[p.id]).map((p) => ({ id: p.id, name: priceMap[p.id].name, price: priceMap[p.id].price, qty: p.qty }));
   const rfdCost = parts.reduce((s, p) => s + p.price * p.qty, 0);
   const doc = {
-    vehicleNo, hubId: req.user.hubId, agentName: titleCase(b.agentName),
-    batteryType: b.batteryType, batteryPresent: !!b.batteryPresent,
-    category: b.category, condition: b.condition, parts, rfdCost,
-    notes: String(b.notes || '').slice(0, 500),
+    vehicleNo: f.vehicleNo, hubId: f.hubId, agentId: req.user.id, agentName: req.user.name,
+    batteryType: f.batteryType, batteryPresent: f.batteryPresent,
+    category: f.category, condition: f.condition, parts, rfdCost,
+    notes: f.notes,
     photos: (b.photos || []).slice(0, 4).filter((p) => typeof p === 'string' && p.startsWith('data:image/') && p.length < 250000),
     createdAt: Date.now(),
   };
   const r = await db.collection('audits').add(doc);
+  await db.collection('drafts').doc(req.user.id).delete();
   res.json({ id: r.id, rfdCost });
 }));
 
 const LIST_FIELDS = ['vehicleNo', 'hubId', 'agentName', 'batteryType', 'batteryPresent', 'category', 'condition', 'parts', 'rfdCost', 'createdAt'];
 async function queryAudits(user, p) {
   let q = db.collection('audits');
-  const hub = user.role === 'agent' ? user.hubId : String(p.hubId || '').toLowerCase();
+  const hub = String(p.hubId || '').toLowerCase();
+  if (user.role === 'agent') q = q.where('agentId', '==', user.id); // agent sirf apne audits dekhega
   if (hub) q = q.where('hubId', '==', hub);
   const snap = await q.select(...LIST_FIELDS).get();
   const from = Number(p.from) || 0; const to = Number(p.to) || Infinity;
@@ -182,7 +262,7 @@ app.get('/api/audits/:id', auth(), wrap(async (req, res) => {
   const d = await db.collection('audits').doc(req.params.id).get();
   if (!d.exists) return res.status(404).json({ error: 'Not found' });
   const a = d.data();
-  if (req.user.role === 'agent' && a.hubId !== req.user.hubId) return res.status(403).json({ error: 'Not allowed' });
+  if (req.user.role === 'agent' && a.agentId !== req.user.id) return res.status(403).json({ error: 'Not allowed' });
   res.json({ id: d.id, ...a });
 }));
 app.delete('/api/audits/:id', auth(['admin']), wrap(async (req, res) => {
@@ -246,4 +326,4 @@ app.post('/api/email-report', auth(['admin']), wrap(async (req, res) => {
 }));
 
 app.get('/api/health', (_, res) => res.json({ ok: true }));
-Promise.all([seedAdmin(), seedParts()]).then(() => app.listen(process.env.PORT || 8080, () => console.log('API running')));
+Promise.all([seedAdmin(), seedParts()]).then(migrateHubs).then(() => app.listen(process.env.PORT || 8080, () => console.log('API running')));

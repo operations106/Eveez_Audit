@@ -40,19 +40,19 @@ function render() {
   const app = $('#app');
   if (!S.token) return loginView(app);
   const admin = S.user.role === 'admin';
-  const tabs = admin ? [['dash', 'Dashboard'], ['report', 'Report'], ['hubs', 'Hubs'], ['parts', 'Parts']] : [['new', 'New Audit'], ['report', 'My Audits']];
+  const tabs = admin ? [['dash', 'Dashboard'], ['report', 'Report'], ['hubs', 'Hubs'], ['agents', 'Agents'], ['parts', 'Parts']] : [['new', 'New Audit'], ['report', 'My Audits']];
   if (!tabs.find((t) => t[0] === S.tab)) S.tab = tabs[0][0];
-  app.innerHTML = `<header><b>EV Hub Audit</b><small>${admin ? 'Admin' : 'Hub: ' + esc(S.user.hubId)}</small><button class="btn alt sm" id="lo">Logout</button></header>
+  app.innerHTML = `<header><b>EV Hub Audit</b><small>${admin ? 'Admin' : esc(S.user.name)}</small><button class="btn alt sm" id="lo">Logout</button></header>
   <nav>${tabs.map(([k, l]) => `<button data-t="${k}" class="${S.tab === k ? 'on' : ''}">${l}</button>`).join('')}</nav><main id="main"></main>`;
   $('#lo').onclick = logout;
   app.querySelectorAll('nav button').forEach((b) => (b.onclick = () => { S.tab = b.dataset.t; render(); }));
-  ({ new: newAuditView, dash: dashboardView, report: reportView, hubs: hubsView, parts: partsView })[S.tab]($('#main'));
+  ({ new: newAuditView, dash: dashboardView, report: reportView, hubs: hubsView, agents: agentsView, parts: partsView })[S.tab]($('#main'));
 }
 
 function loginView(app) {
-  app.innerHTML = `<div class="login"><h1>EV Hub Audit</h1><p class="muted">Hub ID se login karo. Admin apna username daale.</p>
+  app.innerHTML = `<div class="login"><h1>EV Hub Audit</h1><p class="muted">Apni Login ID se login karo.</p>
   <form id="loginForm" autocomplete="on">
-    <label for="i">Hub ID / Username</label><input id="i" name="username" autocapitalize="none" autocomplete="username" required>
+    <label for="i">Login ID</label><input id="i" name="username" autocapitalize="none" autocomplete="username" required>
     <label for="p">Password</label><div class="pw"><input id="p" name="password" type="password" autocomplete="current-password" required><button type="button" class="eye" id="eye" aria-label="Password dikhao">Dikhao</button></div>
     <p class="err" id="e" role="alert" aria-live="polite"></p><button class="btn" id="go" type="submit" style="width:100%;margin-top:8px">Login</button>
   </form></div>`;
@@ -71,7 +71,7 @@ function loginView(app) {
     const id = idInput.value.trim();
     const password = passwordInput.value;
     if (!id || !password) {
-      error.textContent = 'Hub ID aur password dono bharein';
+      error.textContent = 'Login ID aur password dono bharein';
       if (!id) idInput.focus(); else passwordInput.focus();
       return;
     }
@@ -111,54 +111,111 @@ function loginView(app) {
 
 async function newAuditView(m) {
   if (!S.parts.length) S.parts = await api('/parts').catch(() => []);
-  S.form = { parts: [], photos: [] };
-  const f = S.form;
+  const hubs = await api('/hubs').catch(() => []);
+  // Pehle se save draft (page refresh / app band hone par bhi wapas aa jayega)
+  const dr = await api('/draft').catch(() => null);
+  const f = { parts: [], photos: [] };
+  const partById = (id) => S.parts.find((x) => x.id === id);
+  if (dr) (dr.parts || []).forEach((p) => { const x = partById(p.id); if (x) f.parts.push({ id: x.id, name: x.name, price: x.price, qty: p.qty }); });
+  const D = dr || {};
+  const lastHub = localStorage.getItem('hub') || '';
+  const hubSel = D.hubId || (hubs.some((h) => h.hubId === lastHub) ? lastHub : '');
+  const chk = (cur, val, def) => ((cur || def) === val ? 'checked' : '');
   m.innerHTML = `<div class="card"><h2>Vehicle audit</h2>
-  <label>Vehicle number</label><input id="vn" placeholder="DL1SXX1234" autocapitalize="characters">
-  <label>Agent name *</label><input id="an" list="anl" value="${esc(localStorage.getItem('an') || '')}"><datalist id="anl">${JSON.parse(localStorage.getItem('ans') || '[]').map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
-  <label>Battery type</label><div class="seg">${BATT.map((b, i) => `<label><input type="radio" name="bt" value="${b}" ${i ? '' : 'checked'}><span>${b}</span></label>`).join('')}</div>
-  <label>Battery vehicle me hai?</label><div class="seg"><label><input type="radio" name="bp" value="1" checked><span>Haan</span></label><label><input type="radio" name="bp" value="0"><span>Nahi</span></label></div>
-  <div class="row"><div><label>Category</label><select id="cat">${CATS.map((c) => `<option>${c}</option>`).join('')}</select></div>
-  <div><label>Condition</label><select id="cond">${CONDS.map((c) => `<option>${c}</option>`).join('')}</select></div></div></div>
-  <div class="card"><h2>Parts needed</h2>
-  <div class="row3"><div><label>Part</label><select id="ps"><option value="">— part chuno —</option>${S.parts.map((p) => `<option value="${p.id}">${esc(p.name)} (${money(p.price)})</option>`).join('')}</select></div>
-  <div><label>Qty</label><input id="pq" type="number" min="1" value="1"></div><button class="btn" id="pa">Add</button></div>
+  <div class="row"><div><label>Hub *</label><select id="hub"><option value="">— hub chuno —</option>${hubs.map((h) => `<option value="${esc(h.hubId)}" ${h.hubId === hubSel ? 'selected' : ''}>${esc(h.name)}</option>`).join('')}</select></div>
+  <div><label>Vehicle number *</label><input id="vn" placeholder="DL1SXX1234" autocapitalize="characters" value="${esc(D.vehicleNo || '')}"></div></div>
+  <label>Battery type</label><div class="seg">${BATT.map((b) => `<label><input type="radio" name="bt" value="${b}" ${chk(D.batteryType, b, BATT[0])}><span>${b}</span></label>`).join('')}</div>
+  <label>Battery vehicle me hai?</label><div class="seg"><label><input type="radio" name="bp" value="1" ${D.batteryPresent === false ? '' : 'checked'}><span>Haan</span></label><label><input type="radio" name="bp" value="0" ${D.batteryPresent === false ? 'checked' : ''}><span>Nahi</span></label></div>
+  <div class="row"><div><label>Category</label><select id="cat">${CATS.map((c) => `<option ${c === (D.category || CATS[0]) ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+  <div><label>Condition</label><select id="cond">${CONDS.map((c) => `<option ${c === (D.condition || CONDS[0]) ? 'selected' : ''}>${c}</option>`).join('')}</select></div></div></div>
+  <div class="card"><div class="flex" style="align-items:center"><h2 style="margin:0;flex:3">Parts needed</h2><small class="muted" id="sst" style="flex:2;text-align:right"></small></div>
+  <input id="psq" type="search" placeholder="Part search karo…" autocomplete="off" style="margin-top:10px">
+  <div class="plist" id="pl"></div>
+  <h2 style="margin:14px 0 4px;font-size:15px">Add kiye hue parts</h2>
   <div class="tw"><table id="pt"></table></div></div>
-  <div class="card"><h2>Photos</h2><p class="muted" style="margin:0">Auto compress hoti hain (~60KB). Max 4.</p>
+  <div class="card"><h2>Photos</h2><p class="muted" style="margin:0">Auto compress hoti hain (~60KB). Max 4. (Photos draft me save nahi hoti, Save se pehle page band na karein.)</p>
   <input id="ph" type="file" accept="image/*" capture="environment" multiple style="margin-top:8px"><div class="thumbs" id="th"></div></div>
-  <div class="card"><label style="margin-top:0">Notes (optional)</label><textarea id="nt" rows="2"></textarea>
-  <p>RFD cost: <span class="total" id="tot">₹0</span></p><button class="btn" id="sv" style="width:100%">Save audit</button></div>`;
+  <div class="card"><label style="margin-top:0">Notes (optional)</label><textarea id="nt" rows="2">${esc(D.notes || '')}</textarea>
+  <p>RFD cost: <span class="total" id="tot">₹0</span></p><div class="flex"><button class="btn" id="sv" style="flex:3">Save audit</button><button class="btn alt" id="rs" style="flex:1">Reset</button></div></div>`;
+
+  // ----- draft autosave: ek ke baad ek, hamesha latest state bhejta hai -----
+  let closed = false, timer = null, chain = Promise.resolve();
+  const snap = () => ({
+    vehicleNo: $('#vn').value, hubId: $('#hub').value, batteryType: $('input[name=bt]:checked').value,
+    batteryPresent: $('input[name=bp]:checked').value === '1', category: $('#cat').value, condition: $('#cond').value,
+    notes: $('#nt').value, parts: f.parts.map((p) => ({ id: p.id, qty: p.qty })),
+  });
+  const setSt = (t, bad) => { const e = $('#sst'); if (e) { e.textContent = t; e.className = bad ? 'no' : 'muted'; } };
+  const persist = () => {
+    clearTimeout(timer);
+    if (closed) return chain;
+    chain = chain.then(async () => {
+      if (closed) return;
+      try { setSt('Saving…'); await api('/draft', 'PUT', snap()); setSt('✓ Saved'); } catch { setSt('Save nahi hua — net check karo', true); }
+    });
+    return chain;
+  };
+  const later = () => { clearTimeout(timer); setSt('…'); timer = setTimeout(persist, 700); };
+  ['#vn', '#nt'].forEach((id) => ($(id).oninput = later));
+  ['#hub', '#cat', '#cond'].forEach((id) => ($(id).onchange = () => { if (id === '#hub') localStorage.setItem('hub', $('#hub').value); persist(); }));
+  m.querySelectorAll('input[name=bt],input[name=bp]').forEach((r) => (r.onchange = persist));
+
+  // ----- parts picker: poori list khuli hai, scroll karo, qty daalo, Add dabao -----
+  const qty = {}; // part id -> abhi picker me chuni hui qty
+  const q = (id) => Math.max(1, parseInt(qty[id]) || 1);
+  const added = (id) => (f.parts.find((x) => x.id === id) || {}).qty || 0;
+  const drawList = () => {
+    const t = $('#psq').value.trim().toLowerCase();
+    const words = t.split(/\s+/).filter(Boolean);
+    const list = S.parts.filter((p) => words.every((w) => p.name.toLowerCase().includes(w)));
+    $('#pl').innerHTML = list.map((p) => `<div class="prow" data-id="${p.id}"><div class="pn"><b>${esc(p.name)}</b><small>${money(p.price)}${added(p.id) ? ` · <span class="yes">✓ ${added(p.id)} added</span>` : ''}</small></div>
+      <div class="qty"><button type="button" class="qb" data-m aria-label="Kam">−</button><input type="number" inputmode="numeric" min="1" value="${q(p.id)}" aria-label="Quantity"><button type="button" class="qb" data-p aria-label="Zyada">+</button></div>
+      <button type="button" class="btn sm" data-a>Add</button></div>`).join('') || '<p class="muted" style="padding:10px">Koi part nahi mila</p>';
+  };
+  $('#psq').oninput = drawList;
+  $('#pl').addEventListener('click', (e) => {
+    const row = e.target.closest('.prow'); if (!row) return;
+    const id = row.dataset.id; const inp = $('input', row);
+    if (e.target.closest('[data-m]')) { qty[id] = Math.max(1, q(id) - 1); inp.value = qty[id]; return; }
+    if (e.target.closest('[data-p]')) { qty[id] = q(id) + 1; inp.value = qty[id]; return; }
+    if (e.target.closest('[data-a]')) {
+      if (!$('#vn').value.trim()) return toast('Pehle vehicle number daalo');
+      const p = partById(id); const n = Math.max(1, parseInt(inp.value) || 1);
+      const ex = f.parts.find((x) => x.id === id); ex ? (ex.qty += n) : f.parts.push({ id: p.id, name: p.name, price: p.price, qty: n });
+      qty[id] = 1; draw(); toast(p.name + ' ×' + n + ' add hua'); persist();
+    }
+  });
+  $('#pl').addEventListener('input', (e) => { const row = e.target.closest('.prow'); if (row && e.target.matches('input')) qty[row.dataset.id] = e.target.value; });
+
   const draw = () => {
     $('#pt').innerHTML = f.parts.length ? `<tr><th>Part</th><th class="num">Qty</th><th class="num">Price</th><th></th></tr>` + f.parts.map((p, i) =>
-      `<tr><td>${esc(p.name)}</td><td class="num">${p.qty}</td><td class="num">${money(p.price * p.qty)}</td><td><button class="btn red sm" data-r="${i}">✕</button></td></tr>`).join('') : '<tr><td class="muted">Abhi koi part nahi</td></tr>';
-    $('#pt').querySelectorAll('[data-r]').forEach((b) => (b.onclick = () => { f.parts.splice(+b.dataset.r, 1); draw(); }));
+      `<tr><td>${esc(p.name)}</td><td class="num"><div class="qty sm"><button type="button" class="qb" data-dn="${i}">−</button><span>${p.qty}</span><button type="button" class="qb" data-up="${i}">+</button></div></td><td class="num">${money(p.price * p.qty)}</td><td><button class="btn red sm" data-r="${i}">✕</button></td></tr>`).join('') : '<tr><td class="muted">Abhi koi part nahi — upar list se Add karo</td></tr>';
+    $('#pt').querySelectorAll('[data-r]').forEach((b) => (b.onclick = () => { f.parts.splice(+b.dataset.r, 1); draw(); persist(); }));
+    $('#pt').querySelectorAll('[data-up]').forEach((b) => (b.onclick = () => { f.parts[+b.dataset.up].qty++; draw(); persist(); }));
+    $('#pt').querySelectorAll('[data-dn]').forEach((b) => (b.onclick = () => { const p = f.parts[+b.dataset.dn]; if (p.qty > 1) { p.qty--; draw(); persist(); } }));
     $('#tot').textContent = money(f.parts.reduce((s, p) => s + p.price * p.qty, 0));
     $('#th').innerHTML = f.photos.map((p, i) => `<div><img src="${p}" alt="photo ${i + 1}"><button data-x="${i}" aria-label="Remove">✕</button></div>`).join('');
     $('#th').querySelectorAll('[data-x]').forEach((b) => (b.onclick = () => { f.photos.splice(+b.dataset.x, 1); draw(); }));
+    drawList();
   };
   draw();
-  $('#pa').onclick = () => {
-    const p = S.parts.find((x) => x.id === $('#ps').value); if (!p) return toast('Pehle part chuno');
-    const qty = Math.max(1, parseInt($('#pq').value) || 1);
-    const ex = f.parts.find((x) => x.id === p.id); ex ? (ex.qty += qty) : f.parts.push({ id: p.id, name: p.name, price: p.price, qty });
-    $('#ps').value = ''; $('#pq').value = 1; draw();
-  };
   $('#ph').onchange = async (e) => {
     for (const file of [...e.target.files]) { if (f.photos.length >= 4) break; try { f.photos.push(await compress(file)); } catch (x) { toast(x.message); } }
     e.target.value = ''; draw();
   };
+  $('#rs').onclick = async () => {
+    if (!confirm('Ye vehicle ka draft hata kar naya form shuru karein?')) return;
+    closed = true; clearTimeout(timer); await chain;
+    await api('/draft', 'DELETE').catch(() => {}); newAuditView(m);
+  };
   $('#sv').onclick = async () => {
     const vn = $('#vn').value.trim(); if (!vn) return toast('Vehicle number daalo');
-    if (!$('#an').value.trim()) return toast('Agent name daalo');
-    localStorage.setItem('an', $('#an').value);
-    const ans = new Set(JSON.parse(localStorage.getItem('ans') || '[]')); ans.add($('#an').value.trim()); localStorage.setItem('ans', JSON.stringify([...ans].slice(-20)));
+    if (!$('#hub').value) return toast('Hub chuno');
     $('#sv').disabled = true;
+    clearTimeout(timer); await chain; // pending draft save khatam hone do
     try {
-      const r = await api('/audits', 'POST', {
-        vehicleNo: vn, agentName: $('#an').value, batteryType: $('input[name=bt]:checked').value,
-        batteryPresent: $('input[name=bp]:checked').value === '1', category: $('#cat').value, condition: $('#cond').value,
-        parts: f.parts.map((p) => ({ id: p.id, qty: p.qty })), photos: f.photos, notes: $('#nt').value,
-      });
+      const r = await api('/audits', 'POST', { ...snap(), photos: f.photos });
+      closed = true; localStorage.setItem('hub', $('#hub').value);
       toast('Saved — RFD ' + money(r.rfdCost)); newAuditView(m);
     } catch (e) { toast(e.message); $('#sv').disabled = false; }
   };
@@ -171,11 +228,11 @@ const groupBy = (a, f) => { const m = {}; a.forEach((x) => (m[f(x)] = m[f(x)] ||
 
 async function filterBar(el, onApply) {
   const admin = S.user.role === 'admin';
-  const hubs = admin ? await api('/hubs').catch(() => []) : [];
+  const hubs = await api('/hubs').catch(() => []);
   const opt = (arr, all) => `<option value="">${all}</option>` + arr.map((x) => `<option>${esc(x)}</option>`).join('');
   el.innerHTML = `<div class="card noprint"><div class="chips">${[['Aaj', 0], ['7 din', 6], ['30 din', 29], ['Sab', -1]].map(([l, d]) => `<button class="chip" data-d="${d}">${l}</button>`).join('')}</div><div class="flex">
-  ${admin ? `<div><label>Hub</label><select id="fh"><option value="">All hubs</option>${hubs.map((h) => `<option value="${esc(h.hubId)}">${esc(h.hubId)}</option>`).join('')}</select></div>
-  <div><label>Agent</label><select id="fa"></select></div><div><label>Condition</label><select id="fc">${opt(CONDS, 'All')}</select></div>
+  <div><label>Hub</label><select id="fh"><option value="">All hubs</option>${hubs.map((h) => `<option value="${esc(h.hubId)}">${esc(h.name)}</option>`).join('')}</select></div>
+  ${admin ? `<div><label>Agent</label><select id="fa"></select></div><div><label>Condition</label><select id="fc">${opt(CONDS, 'All')}</select></div>
   <div><label>Category</label><select id="fk">${opt(CATS, 'All')}</select></div><div><label>Battery</label><select id="fb">${opt(BATT, 'All')}</select></div>` : ''}
   <div><label>From</label><input id="ff" type="date"></div><div><label>To</label><input id="ft" type="date"></div>
   <div><label>Vehicle no.</label><input id="fq"></div><button class="btn" id="fg">Show</button></div></div>`;
@@ -283,8 +340,8 @@ async function reportView(m) {
     rows = await api('/audits?' + new URLSearchParams(getP()));
     const tot = sum(rows, (r) => r.rfdCost);
     $('#sum').innerHTML = `<p style="margin:0">${rows.length} vehicles audited · Total RFD cost <span class="total">${money(tot)}</span></p>`;
-    $('#rt').innerHTML = `<tr><th>Vehicle</th>${admin ? '<th>Hub</th><th>Agent</th>' : ''}<th>Battery</th><th>Repair</th><th>Condition</th><th>Parts</th><th class="num">RFD cost</th><th>Date</th></tr>` +
-      (rows.map((r) => `<tr data-id="${r.id}" style="cursor:pointer"><td><b>${esc(r.vehicleNo)}</b></td>${admin ? `<td>${esc(r.hubId)}</td><td>${esc(r.agentName)}</td>` : ''}
+    $('#rt').innerHTML = `<tr><th>Vehicle</th><th>Hub</th>${admin ? '<th>Agent</th>' : ''}<th>Battery</th><th>Repair</th><th>Condition</th><th>Parts</th><th class="num">RFD cost</th><th>Date</th></tr>` +
+      (rows.map((r) => `<tr data-id="${r.id}" style="cursor:pointer"><td><b>${esc(r.vehicleNo)}</b></td><td>${esc(r.hubId)}</td>${admin ? `<td>${esc(r.agentName)}</td>` : ''}
       <td>${esc(r.batteryType)} <span class="${r.batteryPresent ? 'yes' : 'no'}">${r.batteryPresent ? '✓' : 'missing'}</span></td><td>${esc(r.category)}</td>
       <td><span class="tag ${esc(r.condition)}">${esc(r.condition)}</span></td><td>${(r.parts || []).length}</td><td class="num"><b>${money(r.rfdCost)}</b></td><td>${dt(r.createdAt)}</td></tr>`).join('') || '<tr><td class="muted">Koi audit nahi mila</td></tr>');
     $('#rt').querySelectorAll('tr[data-id]').forEach((tr) => (tr.onclick = () => detail(tr.dataset.id)));
@@ -311,13 +368,24 @@ async function reportView(m) {
 
 async function hubsView(m) {
   const hubs = await api('/hubs');
-  m.innerHTML = `<div class="card"><h2>New hub</h2><div class="flex"><div><label>Hub ID (login)</label><input id="hi" autocapitalize="none"></div>
-  <div><label>Hub name</label><input id="hn"></div><div><label>Password</label><input id="hp"></div><button class="btn" id="ha">Create</button></div></div>
-  <div class="card"><h2>Hubs</h2><div class="tw"><table><tr><th>Hub ID</th><th>Name</th><th>Status</th><th></th></tr>${hubs.map((h) => `<tr><td><b>${esc(h.hubId)}</b></td><td>${esc(h.name)}</td><td>${h.active ? 'Active' : 'Disabled'}</td>
-  <td><button class="btn alt sm" data-pw="${esc(h.hubId)}">Reset password</button> <button class="btn alt sm" data-tg="${esc(h.hubId)}" data-a="${h.active}">${h.active ? 'Disable' : 'Enable'}</button></td></tr>`).join('')}</table></div></div>`;
-  $('#ha').onclick = async () => { try { await api('/hubs', 'POST', { hubId: $('#hi').value, name: $('#hn').value, password: $('#hp').value }); toast('Hub ban gaya'); hubsView(m); } catch (e) { toast(e.message); } };
-  m.querySelectorAll('[data-pw]').forEach((b) => (b.onclick = async () => { const p = prompt('Naya password'); if (p) { await api('/hubs/' + b.dataset.pw, 'PUT', { password: p }); toast('Updated'); } }));
+  m.innerHTML = `<div class="card"><h2>Naya hub add karo</h2><div class="flex"><div style="flex:3"><label>Hub name</label><input id="hn" placeholder="Dwarka Hub"></div><button class="btn" id="ha">Add hub</button></div>
+  <p class="muted" style="margin:8px 0 0">Hub ka login nahi hota — agent audit karte time hub select karega.</p></div>
+  <div class="card"><h2>Hubs (${hubs.length})</h2><div class="tw"><table><tr><th>Hub ID</th><th>Name</th><th>Status</th><th></th></tr>${hubs.map((h) => `<tr><td><b>${esc(h.hubId)}</b></td><td>${esc(h.name)}</td><td>${h.active ? 'Active' : 'Disabled'}</td>
+  <td><button class="btn alt sm" data-rn="${esc(h.hubId)}" data-n="${esc(h.name)}">Rename</button> <button class="btn alt sm" data-tg="${esc(h.hubId)}" data-a="${h.active}">${h.active ? 'Disable' : 'Enable'}</button></td></tr>`).join('') || '<tr><td class="muted">Abhi koi hub nahi</td></tr>'}</table></div></div>`;
+  $('#ha').onclick = async () => { try { await api('/hubs', 'POST', { name: $('#hn').value }); toast('Hub add ho gaya'); hubsView(m); } catch (e) { toast(e.message); } };
+  m.querySelectorAll('[data-rn]').forEach((b) => (b.onclick = async () => { const n = prompt('Hub ka naya naam', b.dataset.n); if (n && n.trim()) { await api('/hubs/' + b.dataset.rn, 'PUT', { name: n }); hubsView(m); } }));
   m.querySelectorAll('[data-tg]').forEach((b) => (b.onclick = async () => { await api('/hubs/' + b.dataset.tg, 'PUT', { active: b.dataset.a !== 'true' }); hubsView(m); }));
+}
+
+async function agentsView(m) {
+  const users = await api('/users');
+  m.innerHTML = `<div class="card"><h2>Naya agent login</h2><div class="flex"><div><label>Login ID</label><input id="ui" autocapitalize="none"></div>
+  <div><label>Agent name</label><input id="un"></div><div><label>Password</label><input id="up"></div><button class="btn" id="ua">Create</button></div></div>
+  <div class="card"><h2>Agents (${users.length})</h2><div class="tw"><table><tr><th>Login ID</th><th>Name</th><th>Status</th><th></th></tr>${users.map((u) => `<tr><td><b>${esc(u.userId)}</b></td><td>${esc(u.name)}</td><td>${u.active ? 'Active' : 'Disabled'}</td>
+  <td><button class="btn alt sm" data-pw="${esc(u.userId)}">Reset password</button> <button class="btn alt sm" data-tg="${esc(u.userId)}" data-a="${u.active}">${u.active ? 'Disable' : 'Enable'}</button></td></tr>`).join('') || '<tr><td class="muted">Abhi koi agent nahi</td></tr>'}</table></div></div>`;
+  $('#ua').onclick = async () => { try { await api('/users', 'POST', { userId: $('#ui').value, name: $('#un').value, password: $('#up').value }); toast('Agent ban gaya'); agentsView(m); } catch (e) { toast(e.message); } };
+  m.querySelectorAll('[data-pw]').forEach((b) => (b.onclick = async () => { const p = prompt('Naya password'); if (p) { await api('/users/' + b.dataset.pw, 'PUT', { password: p }); toast('Updated'); } }));
+  m.querySelectorAll('[data-tg]').forEach((b) => (b.onclick = async () => { await api('/users/' + b.dataset.tg, 'PUT', { active: b.dataset.a !== 'true' }); agentsView(m); }));
 }
 
 async function partsView(m) {

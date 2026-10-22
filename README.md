@@ -19,5 +19,10 @@ firebase deploy --only hosting
 Backend .env me CORS_ORIGIN = apna hosting URL rakho.
 
 ## Flow
-Admin login → Parts tab me parts+price (bulk paste) → Hubs tab me hub ID+password banao → Agent ko do.
-Agent: Hub ID se login → New Audit. Admin: Report tab me hub/date/vehicle filter, CSV, print.
+Admin login -> **Hubs** tab me hub ka naam add karo (hub ka login nahi hota) -> **Agents** tab me agent ka Login ID + password banao -> Agent ko do.
+Agent: apni Login ID se login -> New Audit me **hub select** + vehicle number -> parts ki khuli list me scroll karke qty daalo aur Add dabao.
+Har Add / qty change backend me draft ke roop me save hota hai; page refresh ho to wahi vehicle wapas khul jata hai. Save audit dabane par draft final audit ban jata hai.
+Admin: Report tab me hub/agent/date/vehicle filter, CSV, print.
+
+## Purane data ka migration
+Pehli baar naya backend chalte hi: purane har agent-login ke naam se ek hub ban jayega (same ID) aur purane audits ko us agent se jod diya jayega. Kuch manually karna nahi hai.
