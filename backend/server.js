@@ -57,6 +57,9 @@ async function seedParts() {
 app.post('/api/login', wrap(async (req, res) => {
   const id = String(req.body.id || '').trim().toLowerCase();
   const pw = String(req.body.password || '');
+    if (!id || !pw) {
+    return res.status(400).json({ error: 'Hub ID aur password dono bharein' });
+  }
   const d = await db.collection('users').doc(id).get();
   if (!d.exists || !bcrypt.compareSync(pw, d.data().hash)) return res.status(401).json({ error: 'Hub ID / password galat hai' });
   const u = d.data();
