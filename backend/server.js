@@ -17,7 +17,7 @@ app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json({ limit: '2mb' })); // photos pehle se compress hoti hain
 
 const titleCase = (x) => String(x || '').trim().replace(/\s+/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 40);
-const wrap = (fn) => (req, res) => fn(req, res).catch((e) => { console.error(e); res.status(500).json({ error: 'Server error: ' + String((e && e.message) || e).slice(0, 160) }); });
+const wrap = (fn) => (req, res) => fn(req, res).catch((e) => { console.error(e); res.status(500).json({ error: 'Server error' }); });
 
 // ---------- auth ----------
 function auth(roles) {
@@ -343,24 +343,34 @@ app.post('/api/email-report', auth(['admin']), wrap(async (req, res) => {
   const topParts = Object.entries(parts).sort((a, b) => b[1].c - a[1].c).slice(0, 10);
   const filt = [f.hubId && 'Hub: ' + f.hubId, f.agent && 'Agent: ' + f.agent, f.condition && 'Condition: ' + f.condition, f.category && 'Category: ' + f.category,
     f.battery && 'Battery: ' + f.battery, f.from && 'From: ' + ist(+f.from).slice(0, 11), f.to && 'To: ' + ist(+f.to).slice(0, 11), f.q && 'Vehicle: ' + f.q].filter(Boolean).join(' | ') || 'All data';
-  const kpi = (label, val) => `<td style="padding:10px 18px;background:#eef1ee;border-radius:6px"><div style="font-size:12px;color:#5d6b67">${label}</div><div style="font-size:22px;font-weight:bold">${val}</div></td><td style="width:10px"></td>`;
-  const html = `<div style="font:14px Arial,sans-serif;color:#17211f"><h2 style="margin:0 0 4px">EV Hub Audit Report</h2><p style="color:#5d6b67;margin:0 0 12px">${E(filt)}</p>
-  ${req.body.note ? `<p>${E(req.body.note)}</p>` : ''}
-  <table style="border-collapse:separate;margin:0 0 10px"><tr>${kpi('Vehicles', rows.length)}${kpi('Total RFD cost', inr(total))}${kpi('Avg RFD / vehicle', inr(total / rows.length))}${kpi('Battery missing', missing)}</tr></table>
-  <h3>Hub-wise</h3>${table(['Hub', 'Vehicles', 'RFD cost'], hubWise.map(([k, v]) => [k, v.n, inr(v.cost)]))}
-  <h3>Agent-wise</h3>${table(['Agent', 'Vehicles', 'RFD cost'], agentWise.map(([k, v]) => [k, v.n, inr(v.cost)]))}
-  <h3>Condition</h3>${table(['Condition', 'Vehicles'], condWise.map(([k, v]) => [k, v.n]))}
-  <h3>Top parts (by cost)</h3>${table(['Part', 'Qty', 'Cost'], topParts.map(([k, v]) => [k, v.q, inr(v.c)]))}
-  <h3>Vehicles${rows.length > 100 ? ' (first 100, poori list CSV me)' : ''}</h3>${table(['Vehicle', 'Hub', 'Battery', 'Repair', 'Condition', 'RFD cost'], rows.slice(0, 100).map((r) => [r.vehicleNo, r.hubId, r.batteryType + (r.batteryPresent ? '' : ' (missing)'), r.category, r.condition, inr(r.rfdCost)]))}
-  <p style="color:#5d6b67">Poori vehicle-wise detail (RFD cost + parts) CSV attachment me hai.</p></div>`;
-  const text = `EV Hub Audit Report\n${filt}\nVehicles: ${rows.length}\nTotal RFD cost: ${inr(total)}\nAvg per vehicle: ${inr(total / rows.length)}\nBattery missing: ${missing}\nVehicle-wise data CSV attachment me hai.`;
+  const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+  const card = (label, val, bg) => `<td width="50%" style="background:${bg};border-radius:12px;padding:16px 18px;color:#ffffff"><div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px">${label}</div><div style="font-size:26px;font-weight:bold;margin-top:6px">${val}</div></td>`;
+  const box = (t, c, inner) => `<div style="background:#ffffff;border-radius:12px;padding:4px 18px 16px;margin-top:14px"><div style="font-size:16px;font-weight:bold;color:${c};margin:14px 0 8px">${t}</div>${inner}</div>`;
+  const bars = (items, color) => {
+    const max = Math.max(...items.map((i) => i.cost), 1);
+    return `<table width="100%" style="border-collapse:collapse;font:13px Arial,sans-serif;color:#17211f">${items.map((i) => `<tr><td style="padding:8px 0;width:28%;font-weight:bold">${E(i.name)}</td><td style="padding:8px"><div style="background:#e8ecea;border-radius:6px"><div style="background:${color};height:10px;border-radius:6px;width:${Math.max(4, Math.round((i.cost / max) * 100))}%"></div></div></td><td style="padding:8px 0;text-align:right;white-space:nowrap">${i.n} veh &middot; <b>${inr(i.cost)}</b></td></tr>`).join('')}</table>`;
+  };
+  const chipColor = { Good: '#1f9d63', Bad: '#f08a24', Poor: '#d64545' };
+  const chips = condWise.map(([k, v]) => `<span style="display:inline-block;background:${chipColor[k] || '#64748b'};color:#ffffff;border-radius:20px;padding:7px 16px;margin:0 8px 8px 0;font:bold 13px Arial,sans-serif">${E(k)}: ${v.n}</span>`).join('');
+  const partsRows = topParts.map(([k, v], i) => `<tr style="background:${i % 2 ? '#ffffff' : '#f3f0ff'}"><td style="padding:8px 10px">${E(k)}</td><td style="padding:8px 10px;text-align:center">${v.q}</td><td style="padding:8px 10px;text-align:right"><b>${inr(v.c)}</b></td></tr>`).join('');
+  const partsTable = `<table width="100%" style="border-collapse:collapse;font:13px Arial,sans-serif;color:#17211f"><tr style="background:#8b5cf6;color:#ffffff"><th style="padding:8px 10px;text-align:left">Part</th><th style="padding:8px 10px">Qty</th><th style="padding:8px 10px;text-align:right">Cost</th></tr>${partsRows}</table>`;
+  const html = `<div style="background:#f1f4f3;padding:16px;font:14px Arial,sans-serif;color:#17211f"><div style="max-width:640px;margin:0 auto">
+  <div style="background:#0f766e;background-image:linear-gradient(135deg,#0f766e,#2563eb);border-radius:14px;padding:22px 24px;color:#ffffff"><div style="font-size:22px;font-weight:bold">EV Hub Audit Report</div><div style="margin-top:6px;font-size:13px">${today} &nbsp;&middot;&nbsp; ${E(filt)}</div></div>
+  ${req.body.note ? `<div style="background:#fff8e1;border-left:5px solid #f5b301;border-radius:8px;padding:12px 14px;margin-top:14px">${E(req.body.note)}</div>` : ''}
+  <table width="100%" style="border-collapse:separate;border-spacing:8px"><tr>${card('Vehicles', rows.length, '#0f9d74')}${card('Total RFD cost', inr(Math.round(total)), '#2563eb')}</tr><tr>${card('Avg RFD / vehicle', inr(Math.round(total / rows.length)), '#f08a24')}${card('Hubs', hubWise.length, '#8b5cf6')}</tr></table>
+  ${box('Hub-wise RFD cost', '#0f9d74', bars(hubWise.map(([k, v]) => ({ name: k, n: v.n, cost: v.cost })), '#0f9d74'))}
+  ${box('Agent-wise RFD cost', '#2563eb', bars(agentWise.map(([k, v]) => ({ name: k, n: v.n, cost: v.cost })), '#2563eb'))}
+  ${box('Vehicle condition', '#d64545', chips)}
+  ${box('Top parts (by cost)', '#8b5cf6', partsTable)}
+  <p style="color:#5d6b67;font-size:12px;text-align:center;margin:16px 0 0">Poori vehicle-wise detail (RFD cost + parts) attached Excel/CSV me hai.</p></div></div>`;
+  const text = `EV Hub Audit Report - ${today}\n${filt}\nVehicles: ${rows.length}\nTotal RFD cost: ${inr(total)}\nAvg per vehicle: ${inr(total / rows.length)}\nVehicle-wise data Excel/CSV attachment me hai.`;
   const report = {
     filters: filt, note: String(req.body.note || '').slice(0, 300), vehicles: rows.length, totalRfd: total, avgRfd: Math.round(total / rows.length), batteryMissing: missing,
     hubWise: hubWise.map(([k, v]) => ({ hub: k, vehicles: v.n, rfd: v.cost })), agentWise: agentWise.map(([k, v]) => ({ agent: k, vehicles: v.n, rfd: v.cost })),
     condition: condWise.map(([k, v]) => ({ condition: k, vehicles: v.n })), topParts: topParts.map(([k, v]) => ({ part: k, qty: v.q, cost: v.c })),
   };
   try {
-    const r = await sendMail({ to, subject: `EV Audit Report - ${rows.length} vehicles, ${inr(total)} RFD`, html, text, csv: csvOf(rows), filename: 'audit-report.csv', report });
+    const r = await sendMail({ to, subject: `EV Audit Report - ${today}`, html, text, csv: csvOf(rows), filename: 'audit-report.csv', report });
     // Yaha tak sirf tab pahunchte hain jab Apps Script/Gmail ne mail bhej di.
     res.json({ ok: true, sent: rows.length, vehicles: rows.length, totalRfd: total, recipients: r.recipients, sender: r.sender, sentAt: r.sentAt, attachment: r.attachment });
   } catch (e) {
