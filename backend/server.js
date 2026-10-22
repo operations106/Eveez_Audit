@@ -271,23 +271,49 @@ app.delete('/api/audits/:id', auth(['admin']), wrap(async (req, res) => {
 }));
 
 
-// ---------- email: Brevo API (HTTPS). Render free plan par SMTP block hai, isliye API use ki ----------
+// ---------- email: Google Apps Script (Gmail) relay ----------
+// Backend -> Apps Script Web App (HTTPS POST, secret body me) -> Gmail. Brevo hata diya.
+// Env: GOOGLE_SCRIPT_URL (.../exec), GOOGLE_SCRIPT_SECRET (Apps Script ke SCRIPT_SECRET jaisa)
+class MailError extends Error { constructor(message, status = 502) { super(message); this.status = status; } }
+const SCRIPT_URL_RE = /^https:\/\/script\.google\.com\/(?:a\/)?macros\/(?:[^/]+\/)?s\/[\w-]+\/exec$/;
 const E = (x) => String(x ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const inr = (n) => '\u20b9' + Number(n || 0).toLocaleString('en-IN');
 const ist = (t) => new Date(t).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-async function sendMail({ to, subject, html, csv, filename }) {
-  const key = process.env.BREVO_API_KEY, from = process.env.MAIL_FROM;
-  if (!key || !from) throw new Error('Email setup baki hai (BREVO_API_KEY / MAIL_FROM Render me nahi hain)');
-  const r = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: { 'api-key': key, 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({
-      sender: { name: process.env.MAIL_FROM_NAME || 'EV Hub Audit', email: from },
-      to: to.map((email) => ({ email })), subject, htmlContent: html,
-      attachment: [{ name: filename, content: Buffer.from(csv).toString('base64') }],
-    }),
-  });
-  if (!r.ok) throw new Error('Brevo send fail: ' + ((await r.json().catch(() => ({}))).message || r.status));
+
+// Success tabhi return hota hai jab Apps Script khud bole {ok:true, sent:true} (yani Gmail ne mail bhej di).
+async function sendMail({ to, subject, html, text, csv, filename, report }) {
+  const url = process.env.GOOGLE_SCRIPT_URL, secret = process.env.GOOGLE_SCRIPT_SECRET;
+  if (!url || !secret) throw new MailError('Email setup baki hai (GOOGLE_SCRIPT_URL / GOOGLE_SCRIPT_SECRET backend env me nahi hain)', 503);
+  if (!SCRIPT_URL_RE.test(url)) throw new MailError('GOOGLE_SCRIPT_URL galat hai (https://script.google.com/macros/s/.../exec hona chahiye)', 503);
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 45000);
+  let resp, raw;
+  try {
+    // Ek hi baar bhejte hain (retry nahi) taaki duplicate email na jaye. Node fetch Apps Script ka 302 redirect khud follow karta hai.
+    resp = await fetch(url, {
+      method: 'POST', redirect: 'follow', signal: ac.signal,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ secret, to, subject, html, text, csv, filename, report, fromName: process.env.MAIL_FROM_NAME || 'EV Hub Audit' }),
+    });
+    raw = await resp.text();
+  } catch (e) {
+    if (e.name === 'AbortError') throw new MailError('Email service ne time par jawab nahi diya. Email gaya ho sakta hai - dobara bhejne se pehle inbox check karo.', 504);
+    console.error('Apps Script unreachable:', e.message);
+    throw new MailError('Email service tak pahunch nahi paye. Thodi der baad try karo.', 502);
+  } finally { clearTimeout(timer); }
+
+  let j;
+  try { j = JSON.parse(raw); } catch {
+    console.error('Apps Script non-JSON reply, HTTP', resp.status);
+    throw new MailError('Apps Script se galat reply aaya. Deployment me "Who has access = Anyone" aur sahi /exec URL check karo.', 502);
+  }
+  if (!resp.ok || j.ok !== true || j.sent !== true) {
+    console.error('Apps Script mail fail:', j.code || resp.status, String(j.error || '').slice(0, 200));
+    const why = j.code === 'UNAUTHORIZED' ? 'GOOGLE_SCRIPT_SECRET Apps Script ke SCRIPT_SECRET se match nahi karta' : String(j.error || 'Apps Script error').slice(0, 200);
+    throw new MailError('Email nahi gaya: ' + why, 502);
+  }
+  return j; // { ok, sent, sentAt, sender, senderNote, recipients, attachment, ... }
 }
 function csvOf(rows) {
   const c = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
@@ -308,21 +334,39 @@ app.post('/api/email-report', auth(['admin']), wrap(async (req, res) => {
   const rows = await queryAudits(req.user, f);
   if (!rows.length) return res.status(400).json({ error: 'Is filter me koi audit nahi hai' });
   const total = rows.reduce((s, r) => s + r.rfdCost, 0);
+  const missing = rows.filter((r) => !r.batteryPresent).length;
   const parts = {};
   rows.forEach((r) => (r.parts || []).forEach((p) => { parts[p.name] = parts[p.name] || { q: 0, c: 0 }; parts[p.name].q += p.qty; parts[p.name].c += p.qty * p.price; }));
+  const hubWise = countBy(rows, (r) => r.hubId);
+  const agentWise = countBy(rows, (r) => r.agentName || '-').slice(0, 15);
+  const condWise = countBy(rows, (r) => r.condition);
+  const topParts = Object.entries(parts).sort((a, b) => b[1].c - a[1].c).slice(0, 10);
   const filt = [f.hubId && 'Hub: ' + f.hubId, f.agent && 'Agent: ' + f.agent, f.condition && 'Condition: ' + f.condition, f.category && 'Category: ' + f.category,
     f.battery && 'Battery: ' + f.battery, f.from && 'From: ' + ist(+f.from).slice(0, 11), f.to && 'To: ' + ist(+f.to).slice(0, 11), f.q && 'Vehicle: ' + f.q].filter(Boolean).join(' | ') || 'All data';
+  const kpi = (label, val) => `<td style="padding:10px 18px;background:#eef1ee;border-radius:6px"><div style="font-size:12px;color:#5d6b67">${label}</div><div style="font-size:22px;font-weight:bold">${val}</div></td><td style="width:10px"></td>`;
   const html = `<div style="font:14px Arial,sans-serif;color:#17211f"><h2 style="margin:0 0 4px">EV Hub Audit Report</h2><p style="color:#5d6b67;margin:0 0 12px">${E(filt)}</p>
   ${req.body.note ? `<p>${E(req.body.note)}</p>` : ''}
-  <p style="font-size:16px"><b>${rows.length}</b> vehicles &middot; Total RFD cost <b>${inr(total)}</b> &middot; Avg ${inr(total / rows.length)} per vehicle<br>Battery missing: <b>${rows.filter((r) => !r.batteryPresent).length}</b></p>
-  <h3>Hub-wise</h3>${table(['Hub', 'Vehicles', 'RFD cost'], countBy(rows, (r) => r.hubId).map(([k, v]) => [k, v.n, inr(v.cost)]))}
-  <h3>Agent-wise</h3>${table(['Agent', 'Vehicles', 'RFD cost'], countBy(rows, (r) => r.agentName || '-').slice(0, 15).map(([k, v]) => [k, v.n, inr(v.cost)]))}
-  <h3>Condition</h3>${table(['Condition', 'Vehicles'], countBy(rows, (r) => r.condition).map(([k, v]) => [k, v.n]))}
-  <h3>Top parts (by cost)</h3>${table(['Part', 'Qty', 'Cost'], Object.entries(parts).sort((a, b) => b[1].c - a[1].c).slice(0, 10).map(([k, v]) => [k, v.q, inr(v.c)]))}
+  <table style="border-collapse:separate;margin:0 0 10px"><tr>${kpi('Vehicles', rows.length)}${kpi('Total RFD cost', inr(total))}${kpi('Avg RFD / vehicle', inr(total / rows.length))}${kpi('Battery missing', missing)}</tr></table>
+  <h3>Hub-wise</h3>${table(['Hub', 'Vehicles', 'RFD cost'], hubWise.map(([k, v]) => [k, v.n, inr(v.cost)]))}
+  <h3>Agent-wise</h3>${table(['Agent', 'Vehicles', 'RFD cost'], agentWise.map(([k, v]) => [k, v.n, inr(v.cost)]))}
+  <h3>Condition</h3>${table(['Condition', 'Vehicles'], condWise.map(([k, v]) => [k, v.n]))}
+  <h3>Top parts (by cost)</h3>${table(['Part', 'Qty', 'Cost'], topParts.map(([k, v]) => [k, v.q, inr(v.c)]))}
   <h3>Vehicles${rows.length > 100 ? ' (first 100, poori list CSV me)' : ''}</h3>${table(['Vehicle', 'Hub', 'Battery', 'Repair', 'Condition', 'RFD cost'], rows.slice(0, 100).map((r) => [r.vehicleNo, r.hubId, r.batteryType + (r.batteryPresent ? '' : ' (missing)'), r.category, r.condition, inr(r.rfdCost)]))}
-  <p style="color:#5d6b67">Poori detail CSV attachment me hai.</p></div>`;
-  await sendMail({ to, subject: `EV Audit Report - ${rows.length} vehicles, ${inr(total)} RFD`, html, csv: csvOf(rows), filename: 'audit-report.csv' });
-  res.json({ ok: true, sent: rows.length });
+  <p style="color:#5d6b67">Poori vehicle-wise detail (RFD cost + parts) CSV attachment me hai.</p></div>`;
+  const text = `EV Hub Audit Report\n${filt}\nVehicles: ${rows.length}\nTotal RFD cost: ${inr(total)}\nAvg per vehicle: ${inr(total / rows.length)}\nBattery missing: ${missing}\nVehicle-wise data CSV attachment me hai.`;
+  const report = {
+    filters: filt, note: String(req.body.note || '').slice(0, 300), vehicles: rows.length, totalRfd: total, avgRfd: Math.round(total / rows.length), batteryMissing: missing,
+    hubWise: hubWise.map(([k, v]) => ({ hub: k, vehicles: v.n, rfd: v.cost })), agentWise: agentWise.map(([k, v]) => ({ agent: k, vehicles: v.n, rfd: v.cost })),
+    condition: condWise.map(([k, v]) => ({ condition: k, vehicles: v.n })), topParts: topParts.map(([k, v]) => ({ part: k, qty: v.q, cost: v.c })),
+  };
+  try {
+    const r = await sendMail({ to, subject: `EV Audit Report - ${rows.length} vehicles, ${inr(total)} RFD`, html, text, csv: csvOf(rows), filename: 'audit-report.csv', report });
+    // Yaha tak sirf tab pahunchte hain jab Apps Script/Gmail ne mail bhej di.
+    res.json({ ok: true, sent: rows.length, vehicles: rows.length, totalRfd: total, recipients: r.recipients, sender: r.sender, sentAt: r.sentAt, attachment: r.attachment });
+  } catch (e) {
+    if (e instanceof MailError) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
 }));
 
 app.get('/api/health', (_, res) => res.json({ ok: true }));
