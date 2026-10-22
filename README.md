@@ -1,11 +1,23 @@
-# Vehicle Audit App
-## Backend (Node.js)
-1. Firebase console > Firestore enable > Project settings > Service accounts > Generate key -> save as backend/serviceAccount.json
-2. Set env ADMIN_PASSWORD; admin user is auto-created on first start (or run npm run seed locally)
-3. JWT_SECRET=<same> npm start   (deploy on Render/Railway/VPS)
-4. Firestore: create composite index when the console error link appears (audits: hubId asc + createdAt desc)
-## Frontend (Firebase Hosting)
-1. Set API const in frontend/index.html to backend URL
-2. npm i -g firebase-tools && firebase login && firebase init hosting (public dir: frontend) && firebase deploy
-## Use
-Admin logs in (admin) -> creates hub IDs. Agent logs in with hub ID -> audits. Admin sees all hubs, filter, CSV.
+# EV Hub Audit — Setup
+
+## 1. Firebase
+1. console.firebase.google.com → naya project → **Firestore Database** enable karo (production mode; sirf backend access karta hai).
+2. Project Settings → Service accounts → **Generate new private key** (JSON).
+
+## 2. Backend (Node.js)
+cd backend && npm install
+cp .env.example .env     # JWT_SECRET, ADMIN_USER, ADMIN_PASS bharo
+# FIREBASE_SERVICE_ACCOUNT me JSON ko single line me paste karo
+npm start                # pehli baar chalte hi admin ban jayega
+
+Deploy: Google Cloud Run / Render / Railway (koi bhi Node host). Cloud Run par service account env ki zaroorat nahi.
+
+## 3. Frontend (Firebase Hosting)
+Edit frontend/public/config.js → API_URL = deployed backend URL
+npm i -g firebase-tools && firebase login && firebase init hosting  (public dir: frontend/public, SPA: No)
+firebase deploy --only hosting
+Backend .env me CORS_ORIGIN = apna hosting URL rakho.
+
+## Flow
+Admin login → Parts tab me parts+price (bulk paste) → Hubs tab me hub ID+password banao → Agent ko do.
+Agent: Hub ID se login → New Audit. Admin: Report tab me hub/date/vehicle filter, CSV, print.
