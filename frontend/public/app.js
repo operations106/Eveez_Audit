@@ -51,17 +51,62 @@ function render() {
 
 function loginView(app) {
   app.innerHTML = `<div class="login"><h1>EV Hub Audit</h1><p class="muted">Hub ID se login karo. Admin apna username daale.</p>
-  <label>Hub ID / Username</label><input id="i" autocapitalize="none" autocomplete="username">
-  <label>Password</label><div class="pw"><input id="p" type="password" autocomplete="current-password"><button type="button" class="eye" id="eye" aria-label="Password dikhao">Dikhao</button></div>
-  <p class="err" id="e"></p><button class="btn" id="go" style="width:100%;margin-top:8px">Login</button></div>`;
-  const go = async () => {
+  <form id="loginForm" autocomplete="on">
+    <label for="i">Hub ID / Username</label><input id="i" name="username" autocapitalize="none" autocomplete="username" required>
+    <label for="p">Password</label><div class="pw"><input id="p" name="password" type="password" autocomplete="current-password" required><button type="button" class="eye" id="eye" aria-label="Password dikhao">Dikhao</button></div>
+    <p class="err" id="e" role="alert" aria-live="polite"></p><button class="btn" id="go" type="submit" style="width:100%;margin-top:8px">Login</button>
+  </form></div>`;
+
+  const form = $('#loginForm');
+  const idInput = $('#i', form);
+  const passwordInput = $('#p', form);
+  const error = $('#e', form);
+  const button = $('#go', form);
+  let loginInProgress = false;
+
+  const go = async (event) => {
+    if (event) event.preventDefault();
+    if (loginInProgress) return;
+
+    const id = idInput.value.trim();
+    const password = passwordInput.value;
+    if (!id || !password) {
+      error.textContent = 'Hub ID aur password dono bharein';
+      if (!id) idInput.focus(); else passwordInput.focus();
+      return;
+    }
+
+    loginInProgress = true;
+    button.disabled = true;
+    button.textContent = 'Logging in...';
+    error.textContent = '';
+
     try {
-      const r = await api('/login', 'POST', { id: $('#i').value, password: $('#p').value });
-      S.token = r.token; S.user = r.user; localStorage.setItem('tk', r.token); localStorage.setItem('us', JSON.stringify(r.user)); S.tab = ''; render();
-    } catch (e) { $('#e').textContent = e.message; }
+      const r = await api('/login', 'POST', { id, password });
+      S.token = r.token;
+      S.user = r.user;
+      localStorage.setItem('tk', r.token);
+      localStorage.setItem('us', JSON.stringify(r.user));
+      S.tab = '';
+      render();
+    } catch (e) {
+      error.textContent = e.message || 'Login failed';
+    } finally {
+      loginInProgress = false;
+      if (button.isConnected) {
+        button.disabled = false;
+        button.textContent = 'Login';
+      }
+    }
   };
-  $('#eye').onclick = () => { const p = $('#p'); const show = p.type === 'password'; p.type = show ? 'text' : 'password'; $('#eye').textContent = show ? 'Chhupao' : 'Dikhao'; p.focus(); };
-  $('#go').onclick = go; $('#p').onkeydown = (e) => e.key === 'Enter' && go();
+
+  $('#eye').onclick = () => {
+    const show = passwordInput.type === 'password';
+    passwordInput.type = show ? 'text' : 'password';
+    $('#eye').textContent = show ? 'Chhupao' : 'Dikhao';
+    passwordInput.focus();
+  };
+  form.addEventListener('submit', go);
 }
 
 async function newAuditView(m) {
@@ -141,7 +186,9 @@ async function filterBar(el, onApply) {
   const loadAgents = async () => {
     if (!admin) return;
     const a = await api('/agents?hubId=' + encodeURIComponent($('#fh').value)).catch(() => []);
-    const cur = $('#fa').value; $('#fa').innerHTML = opt(a, 'All agents'); $('#fa').value = cur;
+    // Agent filter must contain agent names only; tolerate either string or object API responses.
+    const names = [...new Set((Array.isArray(a) ? a : []).map((x) => typeof x === 'string' ? x : (x && (x.agentName || x.name)) || '').map((x) => String(x).trim()).filter(Boolean))].sort((x, y) => x.localeCompare(y));
+    const cur = $('#fa').value; $('#fa').innerHTML = opt(names, 'All agents'); $('#fa').value = names.includes(cur) ? cur : '';
   };
   if (admin) { $('#fh').onchange = loadAgents; await loadAgents(); }
   el.querySelectorAll('.chip').forEach((c) => (c.onclick = () => { setRange(+c.dataset.d); onApply(); }));
