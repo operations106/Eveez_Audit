@@ -52,7 +52,7 @@ function render() {
 function loginView(app) {
   app.innerHTML = `<div class="login"><h1>EV Hub Audit</h1><p class="muted">Hub ID se login karo. Admin apna username daale.</p>
   <label>Hub ID / Username</label><input id="i" autocapitalize="none" autocomplete="username">
-  <label>Password</label><input id="p" type="password" autocomplete="current-password">
+  <label>Password</label><div class="pw"><input id="p" type="password" autocomplete="current-password"><button type="button" class="eye" id="eye" aria-label="Password dikhao">Dikhao</button></div>
   <p class="err" id="e"></p><button class="btn" id="go" style="width:100%;margin-top:8px">Login</button></div>`;
   const go = async () => {
     try {
@@ -60,6 +60,7 @@ function loginView(app) {
       S.token = r.token; S.user = r.user; localStorage.setItem('tk', r.token); localStorage.setItem('us', JSON.stringify(r.user)); S.tab = ''; render();
     } catch (e) { $('#e').textContent = e.message; }
   };
+  $('#eye').onclick = () => { const p = $('#p'); const show = p.type === 'password'; p.type = show ? 'text' : 'password'; $('#eye').textContent = show ? 'Chhupao' : 'Dikhao'; p.focus(); };
   $('#go').onclick = go; $('#p').onkeydown = (e) => e.key === 'Enter' && go();
 }
 
